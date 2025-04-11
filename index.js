@@ -40,6 +40,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+// Log the CORS origins being used
+console.log('CORS Origins:', process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*');
+
 
 // Apply rate limiting
 const limiter = rateLimit({
