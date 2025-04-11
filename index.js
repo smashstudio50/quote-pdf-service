@@ -11,6 +11,7 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const PORT = process.env.PORT || 3000;
 
 // Initialize Express app
 const app = express();
@@ -35,7 +36,10 @@ const allowedOrigins = process.env.CORS_ORIGIN
 
 console.log('Server starting with CORS configuration:');
 console.log('Allowed origins:', allowedOrigins);
-
+if (!origin) {
+  console.log('Request origin missing, setting wildcard CORS fallback');
+  res.header('Access-Control-Allow-Origin', '*');
+}
 // IMPROVED: More permissive CORS configuration for debugging
 const corsOptions = {
   origin: function (origin, callback) {
@@ -911,6 +915,14 @@ app.get('/test-cors', (req, res) => {
 // Health check routes for Railway/preview/stability
 app.get('/ping', (req, res) => res.status(200).send('pong'));
 app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/ping', (req, res) => {
+  res.send('pong');
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Define server port
 const PORT = process.env.PORT || 3000;
 
