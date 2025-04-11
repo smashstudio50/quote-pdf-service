@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -643,7 +644,7 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     fs.writeFileSync(tempHtmlPath, html, 'utf8');
     console.log(`HTML saved to ${tempHtmlPath}`);
     
-    // IMPROVED: Optimized Puppeteer configuration and reduced memory usage
+    // IMPROVED: Optimized Puppeteer configuration for image loading
     console.log('Launching browser with optimized configuration...');
     browser = await puppeteer.launch({
       args: [
@@ -653,7 +654,6 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
         '--disable-accelerated-2d-canvas',
         '--disable-gpu',
         '--js-flags=--max-old-space-size=512', // Limit JS memory usage
-        '--single-process' // Use single process to reduce memory
       ],
       headless: 'new',
       timeout: 60000, // 60 second timeout
@@ -665,15 +665,15 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     console.log('Creating new page...');
     const page = await browser.newPage();
     
-    // IMPORTANT: Limit resource usage
+    // MODIFIED: Allow images but limit other resource types
     await page.setJavaScriptEnabled(true);
-    await page.setCacheEnabled(false); // Disable cache to save memory
+    await page.setCacheEnabled(true); // Enable cache for images
     await page.setRequestInterception(true);
     
-    // Block unnecessary resources to improve performance and reduce memory usage
+    // Only block unnecessary resources but allow images
     page.on('request', (request) => {
       const resourceType = request.resourceType();
-      if (['font', 'image', 'media', 'websocket'].includes(resourceType)) {
+      if (['font', 'media', 'websocket'].includes(resourceType)) {
         request.abort();
       } else {
         request.continue();
@@ -699,8 +699,35 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     console.log('Setting page content...');
     try {
       await page.setContent(html, { 
-        waitUntil: ['domcontentloaded'],
+        waitUntil: ['domcontentloaded', 'networkidle0'],
         timeout: 30000
+      });
+      
+      // Wait for all images to load
+      await page.evaluate(() => {
+        return new Promise((resolve) => {
+          const imgs = document.querySelectorAll('img');
+          if (imgs.length === 0) {
+            return resolve();
+          }
+          
+          let loadedImages = 0;
+          const imageLoaded = () => {
+            loadedImages++;
+            if (loadedImages === imgs.length) {
+              resolve();
+            }
+          };
+          
+          imgs.forEach(img => {
+            if (img.complete) {
+              imageLoaded();
+            } else {
+              img.addEventListener('load', imageLoaded);
+              img.addEventListener('error', imageLoaded); // Still continue on error
+            }
+          });
+        });
       });
       
       // Wait for network to be idle and all content to load
@@ -714,15 +741,15 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       throw new Error(`Failed to set page content: ${contentError.message}`);
     }
     
-    // Set PDF options
+    // Set PDF options with better margins for A4
     const pdfOptions = {
       format: options?.pageSize || 'A4',
       printBackground: true,
       margin: {
-        top: process.env.PDF_MARGIN_TOP || '20mm',
-        right: process.env.PDF_MARGIN_RIGHT || '20mm',
-        bottom: process.env.PDF_MARGIN_BOTTOM || '20mm',
-        left: process.env.PDF_MARGIN_LEFT || '20mm'
+        top: '10mm',
+        right: '10mm',
+        bottom: '10mm',
+        left: '10mm'
       },
       preferCSSPageSize: true,
       displayHeaderFooter: false,
