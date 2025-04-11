@@ -24,10 +24,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// Parse allowed origins from environment variable
+// Parse allowed origins from environment variable or use default list
 const allowedOrigins = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',') 
-  : ['*'];
+  : [
+      'https://aclima.aismartcrew.com',
+      'https://e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovableproject.com',
+      'https://id-preview--e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovable.app'
+    ];
 
 console.log('Server starting with CORS configuration:');
 console.log('Allowed origins:', allowedOrigins);
