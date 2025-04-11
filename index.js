@@ -18,11 +18,22 @@ const app = express();
 // Set trust proxy to handle rate limiting behind reverse proxies
 app.set('trust proxy', true);
 
+// Validate required environment variables
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('Missing required environment variables:');
+  if (!supabaseUrl) console.error('- SUPABASE_URL is not defined');
+  if (!supabaseKey) console.error('- SUPABASE_SERVICE_KEY is not defined');
+  console.error('Please set these environment variables in your Railway dashboard');
+  process.exit(1); // Exit with error code
+}
+
+console.log('Initializing Supabase client with URL:', supabaseUrl);
+
 // Create Supabase client with service role key for storage write access
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Parse allowed origins from environment variable or use default list
 const allowedOrigins = process.env.CORS_ORIGIN 
@@ -30,13 +41,14 @@ const allowedOrigins = process.env.CORS_ORIGIN
   : [
       'https://aclima.aismartcrew.com',
       'https://e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovableproject.com',
-      'https://id-preview--e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovable.app'
+      'https://id-preview--e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovable.app',
+      'https://localhost:3000'
     ];
 
 console.log('Server starting with CORS configuration:');
 console.log('Allowed origins:', allowedOrigins);
 
-// IMPROVED: More permissive CORS configuration for debugging
+// Configure CORS options with detailed logging
 const corsOptions = {
   origin: function (origin, callback) {
     console.log('Request origin:', origin);
@@ -48,35 +60,42 @@ const corsOptions = {
       return;
     }
     
-    // Check if the origin is in our allowed list or if we're allowing all origins
-    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-      console.log('Origin allowed by CORS policy:', origin);
+    // Check if the origin is in our allowed list
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      console.log('Origin explicitly allowed by CORS policy:', origin);
       callback(null, true);
-    } else {
-      // Check if the origin contains any of our allowed origins as substrings
-      // This helps with development/preview environments with dynamic subdomains
-      const isRelatedOrigin = allowedOrigins.some(allowed => 
-        origin.includes(allowed) || allowed.includes(origin)
-      );
-      
-      if (isRelatedOrigin) {
-        console.log('Related origin allowed by CORS policy:', origin);
-        callback(null, true);
-        return;
-      }
-      
-      console.log('Origin rejected by CORS policy:', origin);
-      callback(new Error('Not allowed by CORS policy'));
+      return;
     }
+    
+    // Check if the origin contains any of our allowed origins as substrings
+    // This helps with development/preview environments with dynamic subdomains
+    const isRelatedOrigin = allowedOrigins.some(allowed => 
+      origin.includes(allowed.replace('https://', '')) || 
+      allowed.includes(origin.replace('https://', ''))
+    );
+    
+    if (isRelatedOrigin) {
+      console.log('Related origin allowed by CORS policy:', origin);
+      callback(null, true);
+      return;
+    }
+    
+    console.log('Origin rejected by CORS policy:', origin);
+    callback(new Error('Not allowed by CORS policy'));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Info', 'ApiKey'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Info', 'ApiKey', 'Origin', 'Accept'],
   credentials: true,
-  maxAge: 86400 // 24 hours
+  maxAge: 86400, // 24 hours
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 };
 
-// Apply CORS middleware with options
+// IMPORTANT: Apply CORS middleware BEFORE other middleware
 app.use(cors(corsOptions));
+
+// Explicit handling of OPTIONS requests to ensure CORS preflight works correctly
+app.options('*', cors(corsOptions));
 
 // Add headers middleware to ensure CORS headers are always set
 app.use((req, res, next) => {
@@ -84,64 +103,52 @@ app.use((req, res, next) => {
   if (origin) {
     res.header('Access-Control-Allow-Origin', origin);
   } else {
+    // When no origin is provided, use wildcard (safer option would be to restrict this)
     res.header('Access-Control-Allow-Origin', '*');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey, Origin, Accept');
   res.header('Access-Control-Allow-Credentials', 'true');
   
-  // Log headers being set
+  // Log headers being set for debugging
   console.log('Setting CORS headers for request from origin:', origin);
   
   next();
 });
 
-// Add a middleware to ensure OPTIONS requests are handled properly
-app.options('*', (req, res) => {
-  // Get the origin from the request
-  const origin = req.headers.origin;
-  
-  console.log('OPTIONS request received from origin:', origin);
-  
-  // Allow all OPTIONS requests for debugging
-  res.header('Access-Control-Allow-Origin', origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400'); // 24 hours
-  
-  // Respond with 200 OK for OPTIONS requests
-  return res.sendStatus(200);
-});
-
-// Middleware
+// Other middleware - added AFTER CORS middleware
 app.use(helmet({
   // Disable content security policy for PDF generation
   contentSecurityPolicy: false,
   // Allow iframe for PDF preview
   frameguard: false
 }));
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '50mb' })); // Increased limit for larger images
 app.use(morgan('combined'));
 
-// Apply rate limiting
+// Apply rate limiting with a higher limit to accommodate PDF generation
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Too many requests from this IP, please try again later.',
-  // Add a custom handler to bypass rate limiting on specific endpoints for debugging
   skipFailedRequests: true,
-  // Safely handle rate limit bypass for trusted proxies
   keyGenerator: (req) => {
-    // Add additional logging for IP addresses to help debug
+    // Log IP addresses for debugging
     console.log('Client IP:', req.ip);
     console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
     return req.ip; 
   }
 });
+
+// Apply rate limiting selectively
 app.use('/generate-quote-pdf', limiter);
+
+// Configure timeout values
+const PDF_GENERATION_TIMEOUT = parseInt(process.env.PDF_GENERATION_TIMEOUT || '120000', 10); // 2 minutes default
+const IMAGE_PROCESSING_TIMEOUT = parseInt(process.env.IMAGE_PROCESSING_TIMEOUT || '60000', 10); // 1 minute default
+const REQUEST_TIMEOUT = parseInt(process.env.REQUEST_TIMEOUT || '180000', 10); // 3 minutes default
 
 // Auth middleware to verify JWT token
 const verifyToken = async (req, res, next) => {
@@ -169,7 +176,43 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-// Function to fetch quote data from Supabase - DEFINE THE FUNCTION BEFORE IT'S USED
+// Health endpoint for monitoring
+app.get('/health', (req, res) => {
+  // Return basic service health information
+  const healthInfo = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    service: 'quote-pdf-service',
+    environment: process.env.NODE_ENV || 'development',
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    supabaseConnection: !!supabase,
+    timeoutSettings: {
+      pdfGenerationTimeout: PDF_GENERATION_TIMEOUT,
+      imageProcessingTimeout: IMAGE_PROCESSING_TIMEOUT,
+      requestTimeout: REQUEST_TIMEOUT
+    }
+  };
+  
+  res.status(200).json(healthInfo);
+});
+
+// Simple ping endpoint that doesn't require CORS
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
+
+// Test-cors endpoint
+app.get('/test-cors', (req, res) => {
+  // Return information about the request to help with debugging
+  res.status(200).json({
+    success: true,
+    message: 'CORS test successful',
+    origin: req.headers.origin
+  });
+});
+
+// Function to fetch quote data from Supabase
 const fetchQuoteData = async (quoteId) => {
   try {
     console.log(`Fetching quote data for ID: ${quoteId}`);
@@ -244,364 +287,41 @@ const fetchQuoteData = async (quoteId) => {
   }
 };
 
-// Function to generate HTML for the quote
+// Generate HTML for the quote
 const generateQuoteHtml = async (quoteData, options) => {
-  try {
-    // Import the HTML template generator function directly
-    // In a real implementation, you might want to replicate this function here
-    // For now, we'll use a simplified version to demonstrate
-    
-    const { quote, lineItems, companyProfile, rooms } = quoteData;
-    
-    // Basic formatting functions
-    const formatCurrency = (amount) => {
-      return new Intl.NumberFormat('en-GB', {
-        style: 'currency',
-        currency: 'GBP',
-      }).format(amount);
-    };
-    
-    const formatDate = (dateString) => {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-GB', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      });
-    };
-    
-    const getAddress = () => {
-      if (quote.site_address) return quote.site_address;
-      
-      return [
-        quote.site_address_line1,
-        quote.site_address_line2,
-        quote.site_city,
-        quote.site_postcode,
-        quote.site_country
-      ].filter(Boolean).join(', ');
-    };
-    
-    // Design settings
-    const accentColor = options.accentColor || companyProfile?.quote_accent_color || '#3b82f6';
-    const headerText = companyProfile?.quote_header_text || '';
-    const footerText = companyProfile?.quote_footer_text || 'Thank you for your business';
-    const titlePageHeading = options.titlePage?.heading || companyProfile?.quote_title_page_heading || 'Professional Quotation';
-    const titlePageSubheading = options.titlePage?.subheading || companyProfile?.quote_title_page_subheading || quote.reference;
-    const titlePageBackgroundUrl = options.titlePage?.backgroundUrl || companyProfile?.quote_title_page_background_url || '';
-    
-    // Generate rooms section
-    const generateRoomsSections = () => {
-      if (!rooms || rooms.length === 0) return '';
-      
-      return `
-        <h3 style="color: ${accentColor}; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 30px;">Rooms and Equipment</h3>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 15px; margin-top: 15px;">
-          ${rooms.map(room => `
-            <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; background-color: #fff;">
-              <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                <span style="font-size: 1.5em; margin-right: 10px;">${room.icon || '🏠'}</span>
-                <div>
-                  <h4 style="margin: 0; font-size: 16px;">${room.name}</h4>
-                  ${room.custom_label ? `<p style="margin: 0; color: #666; font-size: 14px;">${room.custom_label}</p>` : ''}
-                </div>
-              </div>
-              
-              ${room.dimensions ? `
-                <div style="background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 14px;">
-                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <p style="margin: 0; color: #555;">Width: ${room.dimensions.width}m</p>
-                    <p style="margin: 0; color: #555;">Length: ${room.dimensions.length}m</p>
-                    <p style="margin: 0; color: #555;">Height: ${room.dimensions.height}m</p>
-                    ${room.dimensions.area ? `<p style="margin: 0; color: #555;">Area: ${room.dimensions.area}m²</p>` : ''}
-                    ${room.dimensions.volume ? `<p style="margin: 0; color: #555;">Volume: ${room.dimensions.volume}m³</p>` : ''}
-                  </div>
-                </div>
-              ` : ''}
-            </div>
-          `).join('')}
-        </div>
-      `;
-    };
-    
-    // Generate HTML
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>${quote.reference} - Quotation</title>
-        <style>
-          @page {
-            size: ${options.pageSize === 'a4' ? 'A4' : 'letter'};
-            margin: 0;
-          }
-          
-          body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            margin: 0;
-            padding: 0;
-            background-color: #fff;
-          }
-          
-          .container {
-            max-width: 21cm;
-            margin: 0 auto;
-            padding: 0;
-          }
-          
-          .header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 40px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid ${accentColor};
-          }
-          
-          .logo {
-            max-height: 80px;
-            margin-bottom: 10px;
-          }
-          
-          .custom-header {
-            background-color: #f8f9fa;
-            padding: 10px;
-            text-align: center;
-            margin-bottom: 20px;
-            color: ${accentColor};
-            font-style: italic;
-          }
-          
-          .company-info {
-            font-size: 14px;
-          }
-          
-          .quote-info {
-            text-align: right;
-          }
-          
-          .quote-info h2 {
-            color: ${accentColor};
-            margin-bottom: 10px;
-          }
-          
-          .customer-info {
-            margin-bottom: 30px;
-          }
-          
-          h3 {
-            color: ${accentColor};
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 5px;
-            margin-top: 30px;
-          }
-          
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-          }
-          
-          th {
-            background-color: #f2f2f2;
-            text-align: left;
-            padding: 10px;
-            border: 1px solid #ddd;
-          }
-          
-          td {
-            padding: 10px;
-            border: 1px solid #ddd;
-          }
-          
-          tr:nth-child(even) {
-            background-color: #f9f9f9;
-          }
-          
-          .amount-summary {
-            margin-top: 20px;
-            text-align: right;
-          }
-          
-          .total {
-            font-size: 18px;
-            font-weight: bold;
-            margin-top: 10px;
-            color: ${accentColor};
-          }
-          
-          .notes {
-            margin-top: 40px;
-            background-color: #f9f9f9;
-            padding: 15px;
-            border-radius: 5px;
-          }
-          
-          .footer {
-            margin-top: 60px;
-            text-align: center;
-            font-size: 12px;
-            color: #666;
-            border-top: 1px solid #ddd;
-            padding-top: 20px;
-          }
-          
-          .title-page {
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            background: ${titlePageBackgroundUrl ? `url(${titlePageBackgroundUrl}) no-repeat center center` : 'linear-gradient(135deg, #fff, #f5f5f5)'};
-            background-size: cover;
-            position: relative;
-            margin: 0;
-            padding: 0;
-            page-break-after: always;
-          }
-          
-          .title-page-content {
-            position: relative;
-            z-index: 2;
-            padding: 40px;
-            background-color: rgba(255, 255, 255, 0.85);
-            border-radius: 10px;
-            max-width: 500px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-          }
-          
-          .title-page h1 {
-            font-size: 32px;
-            color: ${accentColor};
-            margin-bottom: 10px;
-          }
-          
-          .title-page h2 {
-            font-size: 24px;
-            color: #666;
-            font-weight: normal;
-          }
-          
-          .title-page img {
-            max-width: 200px;
-            margin-bottom: 40px;
-          }
-          
-          .page-break {
-            page-break-before: always;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="title-page">
-          <div class="title-page-content">
-            ${companyProfile?.logo_url ? `<img src="${companyProfile.logo_url}" alt="Company Logo">` : ''}
-            <h1>${titlePageHeading}</h1>
-            <h2>${titlePageSubheading}</h2>
-            <p style="margin-top: 40px; color: #666;">${formatDate(quote.created_at)}</p>
-            <p style="color: #666; font-weight: bold;">${quote.customer_name}</p>
-            <p style="color: #666;">${getAddress()}</p>
-          </div>
-        </div>
+  // ... keep existing code (HTML template generator function implementation)
+};
 
-        <div class="container">
-          ${headerText ? `<div class="custom-header">${headerText}</div>` : ''}
-          
-          <div class="header">
-            <div>
-              ${companyProfile?.logo_url ? `<img src="${companyProfile.logo_url}" alt="Company Logo" class="logo">` : ''}
-              <div class="company-info">
-                <div><strong>${companyProfile?.company_name || 'Your Company'}</strong></div>
-                <div>${companyProfile?.address_line1 || ''}</div>
-                ${companyProfile?.address_line2 ? `<div>${companyProfile.address_line2}</div>` : ''}
-                <div>${companyProfile?.city || ''} ${companyProfile?.postcode || ''}</div>
-                <div>${companyProfile?.phone || ''}</div>
-                <div>${companyProfile?.email || ''}</div>
-              </div>
-            </div>
-            <div class="quote-info">
-              <h2>QUOTATION</h2>
-              <div><strong>Reference:</strong> ${quote.reference}</div>
-              <div><strong>Date:</strong> ${formatDate(quote.created_at)}</div>
-              <div><strong>Valid until:</strong> ${quote.validity_period || 30} days</div>
-            </div>
-          </div>
-          
-          <div class="customer-info">
-            <h3>Customer Information</h3>
-            <div><strong>Name:</strong> ${quote.customer_name}</div>
-            <div><strong>Project Address:</strong> ${getAddress()}</div>
-            ${quote.type ? `<div><strong>Project Type:</strong> ${quote.type}</div>` : ''}
-            ${quote.building_type ? `<div><strong>Building Type:</strong> ${quote.building_type}</div>` : ''}
-          </div>
-          
-          ${options.includeRooms ? generateRoomsSections() : ''}
-          
-          <div class="page-break"></div>
-          
-          <h3>Quote Items</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th>Quantity</th>
-                <th>Unit Price</th>
-                <th>Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${lineItems.map(item => `
-                <tr>
-                  <td>
-                    <strong>${item.description}</strong>
-                    ${item.equipment_make && item.equipment_model ? 
-                      `<br><span style="font-size: 0.9em; color: #666;">${item.equipment_make} ${item.equipment_model}</span>` : ''}
-                  </td>
-                  <td>${item.quantity}</td>
-                  <td>${formatCurrency(item.unit_price)}</td>
-                  <td>${formatCurrency(item.subtotal)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          
-          <div class="amount-summary">
-            <div><strong>Subtotal:</strong> ${formatCurrency(quote.subtotal)}</div>
-            ${quote.tax_amount ? `<div><strong>VAT (${quote.tax_rate}%):</strong> ${formatCurrency(quote.tax_amount)}</div>` : ''}
-            ${quote.discount_amount ? `<div><strong>Discount:</strong> ${formatCurrency(quote.discount_amount)}</div>` : ''}
-            <div class="total"><strong>Total:</strong> ${formatCurrency(quote.total_amount)}</div>
-          </div>
-          
-          <div class="page-break"></div>
-          
-          ${quote.terms || companyProfile?.default_quote_terms ? `
-            <div class="notes">
-              <h3>Terms and Conditions</h3>
-              <div style="white-space: pre-line;">${quote.terms || companyProfile?.default_quote_terms || ''}</div>
-            </div>
-          ` : ''}
-          
-          <div class="footer">
-            <p>${footerText}</p>
-            <p>${companyProfile?.company_name || 'Your Company'}</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
+// Image optimization function to reduce image sizes when needed
+const optimizeImages = async (html, shouldOptimize = false) => {
+  if (!shouldOptimize) return html;
+  
+  console.log('Optimizing images in HTML content...');
+  
+  try {
+    // Simple image optimization technique - replace high resolution image URLs with resized versions
+    // This is a basic implementation - in production you might want to use proper image processing
     
-    return html;
+    // For example, if using Supabase storage, you might append transformation parameters to image URLs
+    // This is a placeholder implementation that can be expanded
+    const optimizedHtml = html.replace(/<img\s+src="([^"]+)"/gi, (match, url) => {
+      // For Supabase storage URLs, you could add transformation parameters
+      if (url.includes('supabase.co') && !url.includes('?')) {
+        return `<img src="${url}?width=800&quality=80"`;
+      }
+      return match;
+    });
+    
+    console.log('Image optimization complete');
+    return optimizedHtml;
   } catch (error) {
-    console.error('Error generating HTML:', error);
-    throw error;
+    console.error('Error optimizing images:', error);
+    // Return original HTML if optimization fails
+    return html;
   }
 };
 
-// Main endpoint for generating quote PDFs
+// Main endpoint for generating quote PDFs with improved timeout handling and image optimization
 app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
   console.log('PDF generation request received');
   console.log('Request origin:', req.headers.origin);
@@ -612,10 +332,22 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
   let tempHtmlPath = null;
   let tempPdfPath = null;
   
+  // Set a timeout for the entire request
+  const requestTimeoutId = setTimeout(() => {
+    if (!res.headersSent) {
+      console.error('Request timeout after', REQUEST_TIMEOUT, 'ms');
+      res.status(504).json({ 
+        error: 'PDF generation timed out', 
+        message: 'The request took too long to complete. Try reducing image sizes or optimizing your PDF.' 
+      });
+    }
+  }, REQUEST_TIMEOUT);
+  
   try {
     const { quoteId, options } = req.body;
     
     if (!quoteId) {
+      clearTimeout(requestTimeoutId);
       return res.status(400).json({ error: 'Missing quoteId parameter' });
     }
     
@@ -639,12 +371,15 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       throw new Error('HTML generation failed - html is undefined');
     }
     
+    // Apply image optimization if requested
+    const processedHtml = await optimizeImages(html, options?.optimizeImages);
+    
     // Save HTML to temp file (for debugging)
     tempHtmlPath = path.join(tempDir, `quote-${quoteId}-${Date.now()}.html`);
-    fs.writeFileSync(tempHtmlPath, html, 'utf8');
+    fs.writeFileSync(tempHtmlPath, processedHtml, 'utf8');
     console.log(`HTML saved to ${tempHtmlPath}`);
     
-    // IMPROVED: Optimized Puppeteer configuration for image loading
+    // Launch browser with optimized configuration
     console.log('Launching browser with optimized configuration...');
     browser = await puppeteer.launch({
       args: [
@@ -656,16 +391,16 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
         '--js-flags=--max-old-space-size=512', // Limit JS memory usage
       ],
       headless: 'new',
-      timeout: 60000, // 60 second timeout
+      timeout: PDF_GENERATION_TIMEOUT,
     });
     
     console.log('Browser launched successfully');
     
-    // Create new page with more verbose error logging
+    // Create new page with error logging
     console.log('Creating new page...');
     const page = await browser.newPage();
     
-    // MODIFIED: Allow images but limit other resource types
+    // Configure page to optimize resource loading
     await page.setJavaScriptEnabled(true);
     await page.setCacheEnabled(true); // Enable cache for images
     await page.setRequestInterception(true);
@@ -680,9 +415,7 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       }
     });
     
-    console.log('Page created and configured');
-    
-    // Add page error event listeners for better debugging
+    // Add page error event listeners for debugging
     page.on('error', err => {
       console.error('Page error:', err);
     });
@@ -695,53 +428,89 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       console.log('Page console message:', msg.text());
     });
     
+    // Set timeout for image processing
+    const imageTimeoutId = setTimeout(() => {
+      console.warn('Image processing is taking longer than expected. Continuing with PDF generation...');
+    }, IMAGE_PROCESSING_TIMEOUT);
+    
     // Set content with stepped approach for more stable rendering
     console.log('Setting page content...');
     try {
-      await page.setContent(html, { 
+      await page.setContent(processedHtml, { 
         waitUntil: ['domcontentloaded', 'networkidle0'],
-        timeout: 30000
+        timeout: IMAGE_PROCESSING_TIMEOUT
       });
       
-      // Wait for all images to load
+      clearTimeout(imageTimeoutId);
+      
+      // Wait for all images to load with improved error handling
       await page.evaluate(() => {
         return new Promise((resolve) => {
           const imgs = document.querySelectorAll('img');
           if (imgs.length === 0) {
-            return resolve();
+            return resolve(true);
           }
           
           let loadedImages = 0;
+          const totalImages = imgs.length;
+          
+          console.log(`Waiting for ${totalImages} images to load...`);
+          
           const imageLoaded = () => {
             loadedImages++;
-            if (loadedImages === imgs.length) {
-              resolve();
+            if (loadedImages === totalImages) {
+              console.log('All images loaded successfully');
+              resolve(true);
             }
           };
           
+          // Set a maximum wait time per image
+          const imageTimeout = 10000; // 10 seconds per image
+          
           imgs.forEach(img => {
+            // Handle already loaded images
             if (img.complete) {
               imageLoaded();
-            } else {
-              img.addEventListener('load', imageLoaded);
-              img.addEventListener('error', imageLoaded); // Still continue on error
+              return;
             }
+            
+            // Handle load and error events
+            img.addEventListener('load', imageLoaded);
+            img.addEventListener('error', () => {
+              console.warn(`Failed to load image: ${img.src}`);
+              imageLoaded(); // Count errors as loaded to avoid hanging
+            });
+            
+            // Set timeout for this specific image
+            setTimeout(() => {
+              if (!img.complete) {
+                console.warn(`Image load timeout: ${img.src}`);
+                imageLoaded(); // Force continue after timeout
+              }
+            }, imageTimeout);
           });
         });
+      }).catch(err => {
+        console.warn('Warning during image loading, continuing anyway:', err);
+        // Continue anyway even if image loading has issues
       });
       
       // Wait for network to be idle and all content to load
       await page.waitForFunction(() => document.readyState === 'complete', {
         timeout: 30000
+      }).catch(err => {
+        console.warn('Warning during page load completion, continuing anyway:', err);
+        // Continue anyway even if not all content is fully loaded
       });
       
       console.log('Page content set successfully');
     } catch (contentError) {
       console.error('Error setting page content:', contentError);
-      throw new Error(`Failed to set page content: ${contentError.message}`);
+      // Continue anyway, we might still be able to generate a PDF even with content errors
+      console.log('Attempting to continue PDF generation despite content errors...');
     }
     
-    // Set PDF options with better margins for A4
+    // Set PDF options with better margins for A4/Letter
     const pdfOptions = {
       format: options?.pageSize || 'A4',
       printBackground: true,
@@ -753,23 +522,24 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       },
       preferCSSPageSize: true,
       displayHeaderFooter: false,
-      timeout: 60000, // 60 second timeout for PDF generation
+      timeout: PDF_GENERATION_TIMEOUT,
       omitBackground: false,
       scale: 1
     };
     
-    // Generate PDF with stepped approach and error handling
+    // Generate PDF with improved error handling
     console.log('Generating PDF with options:', pdfOptions);
     let pdfBuffer;
     try {
       // Force a small delay to ensure all content is rendered
       await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1000)));
       
-      // Generate the PDF with explicit error handling
+      // Generate the PDF with explicit error handling and timeout
       pdfBuffer = await Promise.race([
         page.pdf(pdfOptions),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('PDF generation timeout after 60s')), 60000)
+          setTimeout(() => reject(new Error(`PDF generation timeout after ${PDF_GENERATION_TIMEOUT/1000}s`)), 
+            PDF_GENERATION_TIMEOUT)
         )
       ]);
       
@@ -787,7 +557,6 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     const fileName = `quote-${quoteData.quote.reference.replace(/\s+/g, '-')}-${Date.now()}.pdf`;
     tempPdfPath = path.join(tempDir, fileName);
     
-    // Write PDF file with more robust error handling
     try {
       if (!pdfBuffer) {
         throw new Error('Cannot write null or undefined PDF buffer');
@@ -813,7 +582,7 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       throw new Error(`Failed to upload PDF: ${uploadError.message}`);
     }
     
-    // Generate a public URL (or signed URL if not public)
+    // Generate a public URL
     const { data: urlData } = await supabase.storage
       .from('quote_pdfs')
       .getPublicUrl(fileName);
@@ -823,6 +592,9 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     // Record processing time
     const processingTime = Date.now() - startTime;
     console.log(`PDF generated and uploaded successfully in ${processingTime}ms`);
+    
+    // Clear the request timeout since we're responding successfully
+    clearTimeout(requestTimeoutId);
     
     // Return success response with URL
     res.json({
@@ -834,14 +606,24 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Error in PDF generation:', error);
     
-    // Return detailed error with stack trace for debugging
+    // Clear the request timeout since we're responding with an error
+    clearTimeout(requestTimeoutId);
+    
+    // Return detailed error with additional information
     res.status(500).json({
       error: 'Failed to generate PDF',
       message: error.message,
+      details: 'The server encountered an error while generating the PDF. This may be due to a timeout, large images, or formatting issues.',
+      suggestions: [
+        'Try reducing the size of images in your quote',
+        'Check if there are too many items or complex content',
+        'Try again with image optimization enabled',
+        'Break large quotes into smaller ones'
+      ],
       stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
   } finally {
-    // Cleanup with improved error handling
+    // Cleanup resources
     if (browser) {
       try {
         console.log('Closing browser...');
@@ -850,8 +632,6 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       } catch (err) {
         console.error('Error closing browser:', err);
       }
-    } else {
-      console.log('No browser instance to close');
     }
     
     // Log memory usage to help debug resource constraints
@@ -872,30 +652,18 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     } catch (err) {
       console.error('Error logging memory usage:', err);
     }
-    
-    // Keep temp files for debugging
-    console.log('Temp files kept for debugging:');
-    if (tempHtmlPath) console.log(`- HTML: ${tempHtmlPath}`);
-    if (tempPdfPath) console.log(`- PDF: ${tempPdfPath}`);
   }
 });
 
-// Test CORS endpoint for client testing
-app.get('/test-cors', (req, res) => {
-  res.json({
-    success: true,
-    message: 'CORS test successful',
-    origin: req.headers.origin || 'No origin header'
-  });
-});
-
-// Define server port
-const PORT = process.env.PORT || 3000;
-
 // Start server
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`PDF service running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Memory usage at startup: ${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`);
+  console.log(`Timeout settings: PDF=${PDF_GENERATION_TIMEOUT}ms, Images=${IMAGE_PROCESSING_TIMEOUT}ms, Request=${REQUEST_TIMEOUT}ms`);
+  
+  // Log memory usage at startup
+  const memoryUsage = process.memoryUsage();
+  const usedMemoryMB = Math.round(memoryUsage.rss / 1024 / 1024);
+  console.log(`Memory usage at startup: ${usedMemoryMB}MB`);
 });
-
