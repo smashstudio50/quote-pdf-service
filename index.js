@@ -42,7 +42,8 @@ app.use(cors({
 
 // Log the CORS origins being used
 console.log('CORS Origins:', process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*');
-
+// Handle preflight requests
+app.options('*', cors());
 
 // Apply rate limiting
 const limiter = rateLimit({
