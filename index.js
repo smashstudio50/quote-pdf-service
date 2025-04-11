@@ -12,9 +12,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const PORT = process.env.PORT || 3000;
 const app = express();
 app.set('trust proxy', true);
+
+const PORT = process.env.PORT || 3000;
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -23,28 +24,15 @@ const supabase = createClient(
 
 const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',')
-  : [
-      'https://aclima.aismartcrew.com',
-      'https://e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovableproject.com',
-      'https://id-preview--e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovable.app'
-    ];
-
-console.log('Server starting with CORS configuration:');
-console.log('Allowed origins:', allowedOrigins);
+  : [];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    console.log('Request origin:', origin);
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
     }
-
-    const isRelated = allowedOrigins.some(o => origin.includes(o) || o.includes(origin));
-    if (isRelated) return callback(null, true);
-
-    return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Info', 'ApiKey'],
@@ -55,9 +43,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
+  res.header('Access-Control-Allow-Origin', origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -65,10 +51,7 @@ app.use((req, res, next) => {
 });
 
 app.options('*', (req, res) => {
-  const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -76,20 +59,98 @@ app.options('*', (req, res) => {
   return res.sendStatus(200);
 });
 
-// ... your middleware, verifyToken, fetchQuoteData, generateQuoteHtml, and main route remain unchanged
+app.use(helmet({ contentSecurityPolicy: false, frameguard: false }));
+app.use(express.json({ limit: '20mb' }));
+app.use(morgan('combined'));
 
-app.get('/ping', (req, res) => res.status(200).send('pong'));
-app.get('/health', (req, res) => res.status(200).send('OK'));
-app.get('/test-cors', (req, res) => {
-  res.json({
-    success: true,
-    message: 'CORS test successful',
-    origin: req.headers.origin || 'No origin header'
-  });
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests from this IP, please try again later.',
+  skipFailedRequests: true,
+  keyGenerator: (req) => req.ip
 });
+app.use('/generate-quote-pdf', limiter);
+
+const verifyToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized - No token provided' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user) {
+      return res.status(401).json({ error: 'Unauthorized - Invalid token' });
+    }
+    req.user = data.user;
+    next();
+  } catch (err) {
+    res.status(500).json({ error: 'Internal error during token verification' });
+  }
+};
+
+app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
+  try {
+    const { quoteId } = req.body;
+    if (!quoteId) {
+      return res.status(400).json({ error: 'Missing quoteId' });
+    }
+
+    const { data: quote, error } = await supabase
+      .from('quotes')
+      .select('*')
+      .eq('id', quoteId)
+      .single();
+
+    if (error || !quote) {
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head><meta charset="UTF-8"><title>Quote</title></head>
+        <body>
+          <h1>Quote Reference: ${quote.reference}</h1>
+          <p>Customer: ${quote.customer_name}</p>
+          <p>Total: £${quote.total_amount}</p>
+        </body>
+      </html>
+    `;
+
+    const browser = await puppeteer.launch({ args: ['--no-sandbox'], headless: true });
+    const page = await browser.newPage();
+    await page.setContent(html);
+    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
+    await browser.close();
+
+    const fileName = `quote-${quote.reference}-${uuidv4()}.pdf`;
+    const { error: uploadError } = await supabase.storage
+      .from('quote_pdfs')
+      .upload(fileName, pdfBuffer, {
+        contentType: 'application/pdf',
+        upsert: true
+      });
+
+    if (uploadError) {
+      return res.status(500).json({ error: 'Failed to upload PDF' });
+    }
+
+    const { data: urlData } = await supabase.storage.from('quote_pdfs').getPublicUrl(fileName);
+
+    res.json({ success: true, url: urlData.publicUrl });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate PDF', details: err.message });
+  }
+});
+
+app.get('/ping', (req, res) => res.send('pong'));
+app.get('/health', (req, res) => res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 app.listen(PORT, () => {
   console.log(`PDF service running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Memory usage at startup: ${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`);
 });
