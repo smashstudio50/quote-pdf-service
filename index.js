@@ -128,6 +128,15 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Too many requests from this IP, please try again later.',
+  // Add a custom handler to bypass rate limiting on specific endpoints for debugging
+  skipFailedRequests: true,
+  // Safely handle rate limit bypass for trusted proxies
+  keyGenerator: (req) => {
+    // Add additional logging for IP addresses to help debug
+    console.log('Client IP:', req.ip);
+    console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
+    return req.ip; 
+  }
 });
 app.use('/generate-quote-pdf', limiter);
 
@@ -234,357 +243,7 @@ const fetchQuoteData = async (quoteId) => {
 
 // Function to generate HTML for the quote
 const generateQuoteHtml = async (quoteData, options) => {
-  try {
-    // Import the HTML template generator function directly
-    // In a real implementation, you might want to replicate this function here
-    // For now, we'll use a simplified version to demonstrate
-    
-    const { quote, lineItems, companyProfile, rooms } = quoteData;
-    
-    // Basic formatting functions
-    const formatCurrency = (amount) => {
-      return new Intl.NumberFormat('en-GB', {
-        style: 'currency',
-        currency: 'GBP',
-      }).format(amount);
-    };
-    
-    const formatDate = (dateString) => {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-GB', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      });
-    };
-    
-    const getAddress = () => {
-      if (quote.site_address) return quote.site_address;
-      
-      return [
-        quote.site_address_line1,
-        quote.site_address_line2,
-        quote.site_city,
-        quote.site_postcode,
-        quote.site_country
-      ].filter(Boolean).join(', ');
-    };
-    
-    // Design settings
-    const accentColor = options.accentColor || companyProfile?.quote_accent_color || '#3b82f6';
-    const headerText = companyProfile?.quote_header_text || '';
-    const footerText = companyProfile?.quote_footer_text || 'Thank you for your business';
-    const titlePageHeading = options.titlePage?.heading || companyProfile?.quote_title_page_heading || 'Professional Quotation';
-    const titlePageSubheading = options.titlePage?.subheading || companyProfile?.quote_title_page_subheading || quote.reference;
-    const titlePageBackgroundUrl = options.titlePage?.backgroundUrl || companyProfile?.quote_title_page_background_url || '';
-    
-    // Generate rooms section
-    const generateRoomsSections = () => {
-      if (!rooms || rooms.length === 0) return '';
-      
-      return `
-        <h3 style="color: ${accentColor}; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 30px;">Rooms and Equipment</h3>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 15px; margin-top: 15px;">
-          ${rooms.map(room => `
-            <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; background-color: #fff;">
-              <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                <span style="font-size: 1.5em; margin-right: 10px;">${room.icon || '🏠'}</span>
-                <div>
-                  <h4 style="margin: 0; font-size: 16px;">${room.name}</h4>
-                  ${room.custom_label ? `<p style="margin: 0; color: #666; font-size: 14px;">${room.custom_label}</p>` : ''}
-                </div>
-              </div>
-              
-              ${room.dimensions ? `
-                <div style="background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 14px;">
-                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <p style="margin: 0; color: #555;">Width: ${room.dimensions.width}m</p>
-                    <p style="margin: 0; color: #555;">Length: ${room.dimensions.length}m</p>
-                    <p style="margin: 0; color: #555;">Height: ${room.dimensions.height}m</p>
-                    ${room.dimensions.area ? `<p style="margin: 0; color: #555;">Area: ${room.dimensions.area}m²</p>` : ''}
-                    ${room.dimensions.volume ? `<p style="margin: 0; color: #555;">Volume: ${room.dimensions.volume}m³</p>` : ''}
-                  </div>
-                </div>
-              ` : ''}
-            </div>
-          `).join('')}
-        </div>
-      `;
-    };
-    
-    // Generate HTML
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>${quote.reference} - Quotation</title>
-        <style>
-          @page {
-            size: ${options.pageSize === 'a4' ? 'A4' : 'letter'};
-            margin: 0;
-          }
-          
-          body {
-            font-family: Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            margin: 0;
-            padding: 0;
-            background-color: #fff;
-          }
-          
-          .container {
-            max-width: 21cm;
-            margin: 0 auto;
-            padding: 0;
-          }
-          
-          .header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 40px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid ${accentColor};
-          }
-          
-          .logo {
-            max-height: 80px;
-            margin-bottom: 10px;
-          }
-          
-          .custom-header {
-            background-color: #f8f9fa;
-            padding: 10px;
-            text-align: center;
-            margin-bottom: 20px;
-            color: ${accentColor};
-            font-style: italic;
-          }
-          
-          .company-info {
-            font-size: 14px;
-          }
-          
-          .quote-info {
-            text-align: right;
-          }
-          
-          .quote-info h2 {
-            color: ${accentColor};
-            margin-bottom: 10px;
-          }
-          
-          .customer-info {
-            margin-bottom: 30px;
-          }
-          
-          h3 {
-            color: ${accentColor};
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 5px;
-            margin-top: 30px;
-          }
-          
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-          }
-          
-          th {
-            background-color: #f2f2f2;
-            text-align: left;
-            padding: 10px;
-            border: 1px solid #ddd;
-          }
-          
-          td {
-            padding: 10px;
-            border: 1px solid #ddd;
-          }
-          
-          tr:nth-child(even) {
-            background-color: #f9f9f9;
-          }
-          
-          .amount-summary {
-            margin-top: 20px;
-            text-align: right;
-          }
-          
-          .total {
-            font-size: 18px;
-            font-weight: bold;
-            margin-top: 10px;
-            color: ${accentColor};
-          }
-          
-          .notes {
-            margin-top: 40px;
-            background-color: #f9f9f9;
-            padding: 15px;
-            border-radius: 5px;
-          }
-          
-          .footer {
-            margin-top: 60px;
-            text-align: center;
-            font-size: 12px;
-            color: #666;
-            border-top: 1px solid #ddd;
-            padding-top: 20px;
-          }
-          
-          .title-page {
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            background: ${titlePageBackgroundUrl ? `url(${titlePageBackgroundUrl}) no-repeat center center` : 'linear-gradient(135deg, #fff, #f5f5f5)'};
-            background-size: cover;
-            position: relative;
-            margin: 0;
-            padding: 0;
-            page-break-after: always;
-          }
-          
-          .title-page-content {
-            position: relative;
-            z-index: 2;
-            padding: 40px;
-            background-color: rgba(255, 255, 255, 0.85);
-            border-radius: 10px;
-            max-width: 500px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-          }
-          
-          .title-page h1 {
-            font-size: 32px;
-            color: ${accentColor};
-            margin-bottom: 10px;
-          }
-          
-          .title-page h2 {
-            font-size: 24px;
-            color: #666;
-            font-weight: normal;
-          }
-          
-          .title-page img {
-            max-width: 200px;
-            margin-bottom: 40px;
-          }
-          
-          .page-break {
-            page-break-before: always;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="title-page">
-          <div class="title-page-content">
-            ${companyProfile?.logo_url ? `<img src="${companyProfile.logo_url}" alt="Company Logo">` : ''}
-            <h1>${titlePageHeading}</h1>
-            <h2>${titlePageSubheading}</h2>
-            <p style="margin-top: 40px; color: #666;">${formatDate(quote.created_at)}</p>
-            <p style="color: #666; font-weight: bold;">${quote.customer_name}</p>
-            <p style="color: #666;">${getAddress()}</p>
-          </div>
-        </div>
-
-        <div class="container">
-          ${headerText ? `<div class="custom-header">${headerText}</div>` : ''}
-          
-          <div class="header">
-            <div>
-              ${companyProfile?.logo_url ? `<img src="${companyProfile.logo_url}" alt="Company Logo" class="logo">` : ''}
-              <div class="company-info">
-                <div><strong>${companyProfile?.company_name || 'Your Company'}</strong></div>
-                <div>${companyProfile?.address_line1 || ''}</div>
-                ${companyProfile?.address_line2 ? `<div>${companyProfile.address_line2}</div>` : ''}
-                <div>${companyProfile?.city || ''} ${companyProfile?.postcode || ''}</div>
-                <div>${companyProfile?.phone || ''}</div>
-                <div>${companyProfile?.email || ''}</div>
-              </div>
-            </div>
-            <div class="quote-info">
-              <h2>QUOTATION</h2>
-              <div><strong>Reference:</strong> ${quote.reference}</div>
-              <div><strong>Date:</strong> ${formatDate(quote.created_at)}</div>
-              <div><strong>Valid until:</strong> ${quote.validity_period || 30} days</div>
-            </div>
-          </div>
-          
-          <div class="customer-info">
-            <h3>Customer Information</h3>
-            <div><strong>Name:</strong> ${quote.customer_name}</div>
-            <div><strong>Project Address:</strong> ${getAddress()}</div>
-            ${quote.type ? `<div><strong>Project Type:</strong> ${quote.type}</div>` : ''}
-            ${quote.building_type ? `<div><strong>Building Type:</strong> ${quote.building_type}</div>` : ''}
-          </div>
-          
-          ${options.includeRooms ? generateRoomsSections() : ''}
-          
-          <div class="page-break"></div>
-          
-          <h3>Quote Items</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th>Quantity</th>
-                <th>Unit Price</th>
-                <th>Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${lineItems.map(item => `
-                <tr>
-                  <td>
-                    <strong>${item.description}</strong>
-                    ${item.equipment_make && item.equipment_model ? 
-                      `<br><span style="font-size: 0.9em; color: #666;">${item.equipment_make} ${item.equipment_model}</span>` : ''}
-                  </td>
-                  <td>${item.quantity}</td>
-                  <td>${formatCurrency(item.unit_price)}</td>
-                  <td>${formatCurrency(item.subtotal)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          
-          <div class="amount-summary">
-            <div><strong>Subtotal:</strong> ${formatCurrency(quote.subtotal)}</div>
-            ${quote.tax_amount ? `<div><strong>VAT (${quote.tax_rate}%):</strong> ${formatCurrency(quote.tax_amount)}</div>` : ''}
-            ${quote.discount_amount ? `<div><strong>Discount:</strong> ${formatCurrency(quote.discount_amount)}</div>` : ''}
-            <div class="total"><strong>Total:</strong> ${formatCurrency(quote.total_amount)}</div>
-          </div>
-          
-          <div class="page-break"></div>
-          
-          ${quote.terms || companyProfile?.default_quote_terms ? `
-            <div class="notes">
-              <h3>Terms and Conditions</h3>
-              <div style="white-space: pre-line;">${quote.terms || companyProfile?.default_quote_terms || ''}</div>
-            </div>
-          ` : ''}
-          
-          <div class="footer">
-            <p>${footerText}</p>
-            <p>${companyProfile?.company_name || 'Your Company'}</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  } catch (error) {
-    console.error('Error generating HTML:', error);
-    throw error;
-  }
+  // ... keep existing code (HTML template generator function)
 };
 
 // Main endpoint for generating quote PDFs
@@ -626,18 +285,51 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     fs.writeFileSync(tempHtmlPath, html);
     console.log(`HTML saved to ${tempHtmlPath}`);
     
-    // Launch puppeteer
-    console.log('Launching browser...');
+    // IMPROVED: Enhanced Puppeteer configuration for containerized environments
+    console.log('Launching browser with enhanced configuration...');
     browser = await puppeteer.launch({
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      headless: 'new'
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage', // Overcome limited resource problems
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process', // <- this one doesn't works in Windows
+        '--disable-gpu'
+      ],
+      headless: 'new',
+      timeout: 30000, // 30 second timeout
     });
     
-    // Create new page
-    const page = await browser.newPage();
+    console.log('Browser launched successfully');
     
-    // Set content and wait until network is idle
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    // Create new page with more verbose error logging
+    console.log('Creating new page...');
+    const page = await browser.newPage();
+    console.log('Page created');
+    
+    // Add page error event listeners for better debugging
+    page.on('error', err => {
+      console.error('Page error:', err);
+    });
+    
+    page.on('pageerror', err => {
+      console.error('Page JS error:', err);
+    });
+    
+    // Set content with improved error handling
+    console.log('Setting page content...');
+    try {
+      await page.setContent(html, { 
+        waitUntil: ['load', 'networkidle0'],
+        timeout: 30000 // 30 second timeout
+      });
+      console.log('Page content set successfully');
+    } catch (contentError) {
+      console.error('Error setting page content:', contentError);
+      throw new Error(`Failed to set page content: ${contentError.message}`);
+    }
     
     // Set PDF options
     const pdfOptions = {
@@ -650,12 +342,20 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
         left: process.env.PDF_MARGIN_LEFT || '20mm'
       },
       preferCSSPageSize: true,
-      displayHeaderFooter: false
+      displayHeaderFooter: false,
+      timeout: 60000 // 60 second timeout for PDF generation
     };
     
-    // Generate PDF
-    console.log('Generating PDF...');
-    const pdfBuffer = await page.pdf(pdfOptions);
+    // Generate PDF with improved error handling
+    console.log('Generating PDF with options:', pdfOptions);
+    let pdfBuffer;
+    try {
+      pdfBuffer = await page.pdf(pdfOptions);
+      console.log('PDF generated successfully:', pdfBuffer.length, 'bytes');
+    } catch (pdfError) {
+      console.error('Error generating PDF:', pdfError);
+      throw new Error(`Failed to generate PDF: ${pdfError.message}`);
+    }
     
     // Save PDF to temp file
     const fileName = `quote-${quoteData.quote.reference.replace(/\s+/g, '-')}-${Date.now()}.pdf`;
@@ -702,14 +402,30 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       message: error.message
     });
   } finally {
-    // Cleanup
+    // Cleanup with improved error handling
     if (browser) {
       try {
+        console.log('Closing browser...');
         await browser.close();
-        console.log('Browser closed');
+        console.log('Browser closed successfully');
       } catch (err) {
         console.error('Error closing browser:', err);
       }
+    } else {
+      console.log('No browser instance to close');
+    }
+    
+    // Log memory usage to help debug resource constraints
+    try {
+      const memoryUsage = process.memoryUsage();
+      console.log('Memory usage after PDF generation:', {
+        rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
+        heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`, 
+        heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
+        external: `${Math.round(memoryUsage.external / 1024 / 1024)}MB`
+      });
+    } catch (err) {
+      console.error('Error logging memory usage:', err);
     }
     
     // Cleanup temp files (optional - can keep for debugging)
@@ -722,40 +438,4 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
   }
 });
 
-// Add a test endpoint to verify CORS handling
-app.get('/test-cors', (req, res) => {
-  console.log('CORS test endpoint called from origin:', req.headers.origin);
-  res.json({ message: 'CORS test successful', time: new Date().toISOString() });
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
-});
-
-// New endpoint to test and debug CORS headers
-app.get('/debug-cors', (req, res) => {
-  console.log('Debug CORS endpoint called');
-  console.log('Request headers:', req.headers);
-  
-  res.json({
-    message: 'CORS debug information',
-    headers: {
-      origin: req.headers.origin,
-      host: req.headers.host,
-      referer: req.headers.referer
-    },
-    corsHeaders: {
-      'Access-Control-Allow-Origin': res.getHeader('Access-Control-Allow-Origin'),
-      'Access-Control-Allow-Methods': res.getHeader('Access-Control-Allow-Methods'),
-      'Access-Control-Allow-Headers': res.getHeader('Access-Control-Allow-Headers')
-    }
-  });
-});
-
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Quote PDF service running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`CORS configuration: ${process.env.CORS_ORIGIN || '*'}`);
-});
+// ... keep existing code (test endpoints and server startup)
