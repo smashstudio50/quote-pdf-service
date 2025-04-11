@@ -1,7 +1,7 @@
 FROM node:18-slim
 
+# Install dependencies
 RUN apt-get update && apt-get install -y \
-    wget \
     curl \
     gnupg \
     ca-certificates \
@@ -19,27 +19,37 @@ RUN apt-get update && apt-get install -y \
     libxcomposite1 \
     libxdamage1 \
     libxrandr2 \
-    xdg-utils \
     libu2f-udev \
     libvulkan1 \
-    --no-install-recommends && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    xdg-utils \
+    libgbm1 \
+    wget \
+    --no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Google Chrome
-RUN curl -sSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o chrome.deb && \
-    apt install -y ./chrome.deb && \
-    rm chrome.deb
+# Download and install Google Chrome
+RUN curl -sSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o chrome.deb \
+    && apt install -y ./chrome.deb \
+    && rm chrome.deb
 
-# Set environment variables
+# Puppeteer settings
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
 ENV NODE_ENV=production
 
+# Set workdir
 WORKDIR /usr/src/app
 
+# Install app dependencies
 COPY package*.json ./
 RUN npm install --omit=dev
+
+# Copy source code
 COPY . .
 
 EXPOSE 3000
+
+# Health check (optional but helps with Railway cold starts)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s \
+  CMD curl -f http://localhost:3000/test-cors || exit 1
+
 CMD ["node", "index.js"]
