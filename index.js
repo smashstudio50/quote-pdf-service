@@ -908,6 +908,9 @@ app.get('/test-cors', (req, res) => {
   });
 });
 
+// Health check routes for Railway/preview/stability
+app.get('/ping', (req, res) => res.status(200).send('pong'));
+app.get('/health', (req, res) => res.status(200).send('OK'));
 // Define server port
 const PORT = process.env.PORT || 3000;
 
