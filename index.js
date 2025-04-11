@@ -99,18 +99,17 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Missing quoteId' });
     }
 
-    const { data: quote, error } = await supabase
+    const { data: quote, error: quoteError } = await supabase
       .from('quotes')
       .select('*')
       .eq('id', quoteId)
       .single();
 
-    if (error || !quote) {
+    if (quoteError || !quote) {
       return res.status(404).json({ error: 'Quote not found' });
     }
 
-    const html = `
-      <!DOCTYPE html>
+    const html = `<!DOCTYPE html>
       <html>
         <head><meta charset="UTF-8"><title>Quote</title></head>
         <body>
@@ -118,8 +117,7 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
           <p>Customer: ${quote.customer_name}</p>
           <p>Total: £${quote.total_amount}</p>
         </body>
-      </html>
-    `;
+      </html>`;
 
     const browser = await puppeteer.launch({ args: ['--no-sandbox'], headless: true });
     const page = await browser.newPage();
@@ -145,6 +143,10 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to generate PDF', details: err.message });
   }
+});
+
+app.get('/test-cors', (req, res) => {
+  res.json({ success: true, message: 'CORS test successful' });
 });
 
 app.get('/ping', (req, res) => res.send('pong'));
