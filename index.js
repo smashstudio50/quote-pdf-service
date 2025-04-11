@@ -35,11 +35,11 @@ app.use(helmet());
 app.use(express.json({ limit: '20mb' }));
 app.use(morgan('combined'));
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
+  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*',
+  methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
 }));
+
 
 // Apply rate limiting
 const limiter = rateLimit({
