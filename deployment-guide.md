@@ -1,3 +1,4 @@
+
 # PDF Service Deployment Guide
 
 ## Environment Variables Setup
@@ -21,6 +22,21 @@ The PDF service requires the following environment variables to be set:
 - `MAX_IMAGE_WIDTH`: Maximum width for images in PDFs (pixels)
 - `MAX_GENERATION_RETRIES`: Number of automatic retries for failed PDF generations (default: 2)
 - `DEBUG_MODE`: Enable detailed logging for troubleshooting (true/false)
+
+## Authentication
+
+The PDF service requires authentication using Supabase JWT tokens. Users must be authenticated with Supabase to generate PDFs.
+
+1. The frontend application must include a valid JWT token in the Authorization header
+2. Requests without a valid token will return a 401 Unauthorized error
+3. Make sure that your `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` are correctly set for token validation
+
+For testing purposes, you can verify your authentication flow is working by checking the Supabase session:
+
+```javascript
+const { data: { session } } = await supabase.auth.getSession();
+console.log("Auth session:", session ? "Valid" : "Not authenticated");
+```
 
 ## CORS Configuration Troubleshooting
 
@@ -95,50 +111,25 @@ If you're experiencing timeouts during PDF generation, especially with documents
 
 The service is deployed at: [https://quote-pdf-service-production.up.railway.app](https://quote-pdf-service-production.up.railway.app)
 
-## Checking Service Status
+## Storage Bucket Setup
 
-You can verify the service is running by visiting:
-
-- `/health` - Returns service health status and memory usage
-- `/ping` - Simple ping endpoint (returns "pong", no CORS required)
-- `/test-cors` - Tests if CORS is properly configured
-
-## Health Endpoint
-
-The `/health` endpoint returns detailed information about the service:
-
-```json
-{
-  "status": "ok",
-  "uptime": 12345,
-  "memoryUsage": {
-    "rss": "120MB",
-    "heapTotal": "80MB",
-    "heapUsed": "65MB"
-  },
-  "endpoints": {
-    "/ping": true,
-    "/test-cors": true,
-    "/generate-quote-pdf": true
-  },
-  "version": "1.0.0"
-}
-```
+Ensure you have a storage bucket named 'quote_pdfs' in your Supabase project:
+1. Go to Supabase Dashboard > Storage
+2. Create a new bucket called 'quote_pdfs' if it doesn't exist
+3. Set appropriate permissions for the bucket
 
 ## Troubleshooting
 
-If you see "supabaseUrl is required" error:
-1. Check if the environment variables are properly set in Railway
-2. Verify the variable names are exactly as specified above
-3. Redeploy after making changes to environment variables
+### "Unauthorized - No token provided" Error
+This error occurs when:
+1. The user is not authenticated with Supabase
+2. The JWT token isn't included in the request
+3. The token is invalid or expired
 
-For CORS issues:
-1. Ensure your frontend domain is included in the CORS_ORIGIN list
-2. Check for any typos in the URLs
-3. Remember to include the protocol (https://) in the CORS_ORIGIN list
-4. **Important**: The CORS_ORIGIN must include the exact origin, including any subdomains or ports (for example: `https://e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovableproject.com`)
-5. Verify that POST endpoints have the CORS middleware applied correctly
-6. After updating the CORS_ORIGIN value, redeploy your application in Railway
+To fix:
+1. Make sure users are logged in before generating PDFs
+2. Verify the `Authorization` header is being sent with the JWT token
+3. Check that your Supabase credentials are correct in your Railway environment
 
 ### 502 Bad Gateway / Timeout Issues
 
@@ -149,48 +140,3 @@ If you encounter a "502 Bad Gateway" error when generating PDFs:
 4. For quotes with many images or complex layouts, try reducing complexity or optimizing images
 5. Make sure your Railway instance has sufficient memory allocated for image processing
 6. Consider adding a retry mechanism in your frontend code for large document generation
-
-### No-CORS Mode Fallback
-
-If you're still encountering CORS issues, you can try a no-CORS mode fallback in your frontend code:
-
-```typescript
-// Try with regular CORS mode first
-try {
-  const response = await fetch(pdfServiceUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data)
-  });
-  // Process response
-} catch (error) {
-  console.warn('CORS error, trying with no-cors mode', error);
-  // This will only work for GET requests and won't return usable response data
-  // but can be used as a fallback for simple pings
-  const fallbackResponse = await fetch(pdfServiceUrl, {
-    method: 'GET',
-    mode: 'no-cors'
-  });
-  // Handle fallback
-}
-```
-
-### Debugging PDF Generation Issues
-
-If you're experiencing issues with PDF generation:
-
-1. Set `DEBUG_MODE=true` in your environment variables for detailed logging
-2. Check the Railway logs for any error messages
-3. Review network requests in your browser's developer tools
-4. Try generating with the 'Fast Mode' option enabled
-5. Disable background images and rooms for complex quotes
-6. Verify that image URLs in your quotes are accessible from the PDF service
-
-## Storage Bucket Setup
-
-Ensure you have a storage bucket named 'quote_pdfs' in your Supabase project:
-1. Go to Supabase Dashboard > Storage
-2. Create a new bucket called 'quote_pdfs' if it doesn't exist
-3. Set appropriate permissions for the bucket
