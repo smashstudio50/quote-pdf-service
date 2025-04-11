@@ -679,7 +679,26 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
         request.continue();
       }
     });
-    
+    try {
+  console.log('Launching Puppeteer...');
+  browser = await puppeteer.launch({
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+    ],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome',
+    headless: 'new',
+    timeout: 60000,
+  });
+  console.log('Browser launched successfully');
+} catch (launchErr) {
+  console.error('❌ Failed to launch Puppeteer:', launchErr);
+  throw launchErr;
+}
+
     console.log('Page created and configured');
     
     // Add page error event listeners for better debugging
