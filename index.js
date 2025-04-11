@@ -11,7 +11,7 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const PORT = process.env.PORT || 3000;
+
 
 // Initialize Express app
 const app = express();
