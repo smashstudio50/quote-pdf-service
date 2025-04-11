@@ -15,11 +15,20 @@ const os = require('os');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Configure Express to trust the Render.com proxy
+app.set('trust proxy', 1);
+
 // Create Supabase client with service role key for storage write access
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
+
+// Create temp directory for files if it doesn't exist
+const tempDir = path.join(os.tmpdir(), 'quote-pdfs');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
+}
 
 // Middleware
 app.use(helmet());
@@ -27,8 +36,9 @@ app.use(express.json({ limit: '20mb' }));
 app.use(morgan('combined'));
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
 // Apply rate limiting
@@ -37,9 +47,64 @@ const limiter = rateLimit({
   max: 100, // Limit each IP to 100 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: true }, // Trust proxy for rate limiting
   message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/generate-quote-pdf', limiter);
+
+// Root route handler for health checks
+app.get('/', (req, res) => {
+  res.json({
+    service: 'Quote PDF Generator',
+    status: 'running',
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development',
+    uptime: process.uptime()
+  });
+});
+
+// Expanded health check endpoint
+app.get('/health', async (req, res) => {
+  try {
+    // Check Supabase connection
+    const { data, error } = await supabase.from('quotes').select('id').limit(1);
+    
+    // Check if quote_pdfs bucket exists
+    const { data: bucketData, error: bucketError } = await supabase.storage
+      .getBucket('quote_pdfs');
+    
+    // Check puppeteer by launching a minimal browser
+    let browserCheck = 'failed';
+    try {
+      const browser = await puppeteer.launch({
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        headless: 'new'
+      });
+      await browser.close();
+      browserCheck = 'ok';
+    } catch (err) {
+      console.error('Puppeteer health check failed:', err);
+    }
+    
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'development',
+      memory: process.memoryUsage(),
+      supabase: error ? 'error' : 'connected',
+      storage: bucketError ? 'error' : 'connected',
+      puppeteer: browserCheck,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Health check error:', err);
+    res.status(500).json({
+      status: 'error',
+      error: err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
 // Auth middleware to verify JWT token
 const verifyToken = async (req, res, next) => {
@@ -515,12 +580,6 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     console.log(`Processing quote PDF generation for quote ID: ${quoteId}`);
     console.log('Options:', options);
     
-    // Create temp directory for files if it doesn't exist
-    const tempDir = path.join(os.tmpdir(), 'quote-pdfs');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    
     // Fetch all necessary data for the quote
     const quoteData = await fetchQuoteData(quoteId);
     console.log(`Successfully fetched data for quote ${quoteId}`);
@@ -533,10 +592,19 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     fs.writeFileSync(tempHtmlPath, html);
     console.log(`HTML saved to ${tempHtmlPath}`);
     
-    // Launch puppeteer
+    // Launch puppeteer with improved options for containerized environments
     console.log('Launching browser...');
     browser = await puppeteer.launch({
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ],
       headless: 'new'
     });
     
@@ -629,9 +697,19 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+// Set up graceful shutdown to prevent memory leaks
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  app.close(() => {
+    console.log('HTTP server closed');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT signal received: closing HTTP server');
+  app.close(() => {
+    console.log('HTTP server closed');
+  });
 });
 
 // Start the server
