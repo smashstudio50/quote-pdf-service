@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -325,7 +324,7 @@ const generateQuoteHtml = async (quoteData, options) => {
     };
     
     // Generate HTML
-    return `
+    const html = `
       <!DOCTYPE html>
       <html>
       <head>
@@ -593,6 +592,8 @@ const generateQuoteHtml = async (quoteData, options) => {
       </body>
       </html>
     `;
+    
+    return html;
   } catch (error) {
     console.error('Error generating HTML:', error);
     throw error;
@@ -642,21 +643,20 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     fs.writeFileSync(tempHtmlPath, html, 'utf8');
     console.log(`HTML saved to ${tempHtmlPath}`);
     
-    // IMPROVED: Enhanced Puppeteer configuration for containerized environments
-    console.log('Launching browser with enhanced configuration...');
+    // IMPROVED: Optimized Puppeteer configuration and reduced memory usage
+    console.log('Launching browser with optimized configuration...');
     browser = await puppeteer.launch({
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage', // Overcome limited resource problems
+        '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process', // <- this one doesn't works in Windows
-        '--disable-gpu'
+        '--disable-gpu',
+        '--js-flags=--max-old-space-size=512', // Limit JS memory usage
+        '--single-process' // Use single process to reduce memory
       ],
       headless: 'new',
-      timeout: 30000, // 30 second timeout
+      timeout: 60000, // 60 second timeout
     });
     
     console.log('Browser launched successfully');
@@ -664,7 +664,23 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     // Create new page with more verbose error logging
     console.log('Creating new page...');
     const page = await browser.newPage();
-    console.log('Page created');
+    
+    // IMPORTANT: Limit resource usage
+    await page.setJavaScriptEnabled(true);
+    await page.setCacheEnabled(false); // Disable cache to save memory
+    await page.setRequestInterception(true);
+    
+    // Block unnecessary resources to improve performance and reduce memory usage
+    page.on('request', (request) => {
+      const resourceType = request.resourceType();
+      if (['font', 'image', 'media', 'websocket'].includes(resourceType)) {
+        request.abort();
+      } else {
+        request.continue();
+      }
+    });
+    
+    console.log('Page created and configured');
     
     // Add page error event listeners for better debugging
     page.on('error', err => {
@@ -675,13 +691,23 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       console.error('Page JS error:', err);
     });
     
-    // Set content with improved error handling
+    page.on('console', msg => {
+      console.log('Page console message:', msg.text());
+    });
+    
+    // Set content with stepped approach for more stable rendering
     console.log('Setting page content...');
     try {
       await page.setContent(html, { 
-        waitUntil: ['load', 'networkidle0'],
-        timeout: 30000 // 30 second timeout
+        waitUntil: ['domcontentloaded'],
+        timeout: 30000
       });
+      
+      // Wait for network to be idle and all content to load
+      await page.waitForFunction(() => document.readyState === 'complete', {
+        timeout: 30000
+      });
+      
       console.log('Page content set successfully');
     } catch (contentError) {
       console.error('Error setting page content:', contentError);
@@ -700,29 +726,51 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
       },
       preferCSSPageSize: true,
       displayHeaderFooter: false,
-      timeout: 60000 // 60 second timeout for PDF generation
+      timeout: 60000, // 60 second timeout for PDF generation
+      omitBackground: false,
+      scale: 1
     };
     
-    // Generate PDF with improved error handling
+    // Generate PDF with stepped approach and error handling
     console.log('Generating PDF with options:', pdfOptions);
     let pdfBuffer;
     try {
-      pdfBuffer = await page.pdf(pdfOptions);
+      // Force a small delay to ensure all content is rendered
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1000)));
+      
+      // Generate the PDF with explicit error handling
+      pdfBuffer = await Promise.race([
+        page.pdf(pdfOptions),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('PDF generation timeout after 60s')), 60000)
+        )
+      ]);
+      
+      if (!pdfBuffer || !pdfBuffer.length) {
+        throw new Error('PDF generation produced empty buffer');
+      }
+      
       console.log('PDF generated successfully:', pdfBuffer.length, 'bytes');
     } catch (pdfError) {
       console.error('Error generating PDF:', pdfError);
       throw new Error(`Failed to generate PDF: ${pdfError.message}`);
     }
     
-    if (!pdfBuffer) {
-      throw new Error('PDF generation failed - buffer is undefined');
-    }
-    
     // Save PDF to temp file
     const fileName = `quote-${quoteData.quote.reference.replace(/\s+/g, '-')}-${Date.now()}.pdf`;
     tempPdfPath = path.join(tempDir, fileName);
-    fs.writeFileSync(tempPdfPath, pdfBuffer);
-    console.log(`PDF saved to ${tempPdfPath}`);
+    
+    // Write PDF file with more robust error handling
+    try {
+      if (!pdfBuffer) {
+        throw new Error('Cannot write null or undefined PDF buffer');
+      }
+      fs.writeFileSync(tempPdfPath, pdfBuffer);
+      console.log(`PDF saved to ${tempPdfPath}`);
+    } catch (writeError) {
+      console.error('Error writing PDF file:', writeError);
+      throw new Error(`Failed to write PDF file: ${writeError.message}`);
+    }
     
     // Upload PDF to Supabase Storage
     console.log('Uploading PDF to Supabase Storage...');
@@ -758,9 +806,12 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Error in PDF generation:', error);
+    
+    // Return detailed error with stack trace for debugging
     res.status(500).json({
       error: 'Failed to generate PDF',
-      message: error.message
+      message: error.message,
+      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
   } finally {
     // Cleanup with improved error handling
@@ -785,17 +836,20 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
         heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
         external: `${Math.round(memoryUsage.external / 1024 / 1024)}MB`
       });
+      
+      // Force garbage collection if available
+      if (global.gc) {
+        global.gc();
+        console.log('Manual garbage collection triggered');
+      }
     } catch (err) {
       console.error('Error logging memory usage:', err);
     }
     
-    // Cleanup temp files (optional - can keep for debugging)
-    // if (tempHtmlPath && fs.existsSync(tempHtmlPath)) {
-    //   fs.unlinkSync(tempHtmlPath);
-    // }
-    // if (tempPdfPath && fs.existsSync(tempPdfPath)) {
-    //   fs.unlinkSync(tempPdfPath);
-    // }
+    // Keep temp files for debugging
+    console.log('Temp files kept for debugging:');
+    if (tempHtmlPath) console.log(`- HTML: ${tempHtmlPath}`);
+    if (tempPdfPath) console.log(`- PDF: ${tempPdfPath}`);
   }
 });
 
