@@ -30,5 +30,8 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 # Expose the service port
 EXPOSE 3000
 
+# Add in the Dockerfile before the CMD line
+ENV NODE_ENV=production
+
 # Start the service
 CMD ["node", "index.js"]
