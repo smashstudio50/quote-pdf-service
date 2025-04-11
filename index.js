@@ -119,9 +119,9 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
         </body>
       </html>`;
 
-    const browser = await puppeteer.launch({ args: ['--no-sandbox'], headless: true });
+    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'], headless: true });
     const page = await browser.newPage();
-    await page.setContent(html);
+    await page.setContent(html, { waitUntil: 'networkidle0' });
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
     await browser.close();
 
@@ -141,6 +141,7 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
 
     res.json({ success: true, url: urlData.publicUrl });
   } catch (err) {
+    console.error('PDF generation failed:', err);
     res.status(500).json({ error: 'Failed to generate PDF', details: err.message });
   }
 });
