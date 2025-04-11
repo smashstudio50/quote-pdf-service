@@ -1,0 +1,20 @@
+
+version: '3.8'
+
+services:
+  quote-pdf-service:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - PORT=3000
+      - CORS_ORIGIN=${CORS_ORIGIN}
+    restart: unless-stopped
+    volumes:
+      - pdf-cache:/usr/src/app/cache
+
+volumes:
+  pdf-cache:
