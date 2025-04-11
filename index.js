@@ -15,6 +15,12 @@ const os = require('os');
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Quote PDF service running on port ${PORT}`);
+  console.log(`Server listening on 0.0.0.0:${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`CORS configuration: ${process.env.CORS_ORIGIN || '*'}`);
+});
 
 // Set trust proxy to handle rate limiting behind reverse proxies
 app.set('trust proxy', true);
