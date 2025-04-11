@@ -288,382 +288,603 @@ const fetchQuoteData = async (quoteId) => {
 };
 
 // Generate HTML for the quote
-const generateQuoteHtml = async (quoteData, options) => {
-  // ... keep existing code (HTML template generator function implementation)
+const generateQuoteHtml = (quoteData, options) => {
+  try {
+    if (!quoteData || !quoteData.quote) {
+      console.error('Missing quote data in generateQuoteHtml');
+      throw new Error('Quote data is missing or invalid');
+    }
+    
+    console.log('Generating HTML with quote data:', JSON.stringify({
+      quote_id: quoteData.quote.id,
+      reference: quoteData.quote.reference,
+      line_items_count: quoteData.lineItems?.length || 0,
+      rooms_count: quoteData.rooms?.length || 0,
+      options: options
+    }));
+    
+    const { quote, lineItems, companyProfile, rooms } = quoteData;
+    
+    // Basic formatting functions
+    const formatCurrency = (amount) => {
+      return new Intl.NumberFormat('en-GB', {
+        style: 'currency',
+        currency: 'GBP',
+      }).format(amount || 0);
+    };
+    
+    const formatDate = (dateString) => {
+      try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+      } catch (error) {
+        console.error('Error formatting date:', error);
+        return 'Date not available';
+      }
+    };
+    
+    const getAddress = () => {
+      try {
+        if (quote.site_address) return quote.site_address;
+        
+        return [
+          quote.site_address_line1,
+          quote.site_address_line2,
+          quote.site_city,
+          quote.site_postcode,
+          quote.site_country
+        ].filter(Boolean).join(', ') || 'Address not available';
+      } catch (error) {
+        console.error('Error getting address:', error);
+        return 'Address not available';
+      }
+    };
+    
+    // Generate rooms section HTML
+    const generateRoomsSections = () => {
+      try {
+        if (!rooms || rooms.length === 0) return '';
+        
+        const accentColor = options?.accentColor || companyProfile?.quote_accent_color || '#3b82f6';
+        
+        return `
+          <h3 style="color: ${accentColor}; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 30px;">Rooms and Equipment</h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 15px; margin-top: 15px;">
+            ${rooms.map(room => `
+              <div style="border: 1px solid #ddd; border-radius: 5px; padding: 15px; background-color: #fff;">
+                <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                  <span style="font-size: 1.5em; margin-right: 10px;">${room.icon || '🏠'}</span>
+                  <div>
+                    <h4 style="margin: 0; font-size: 16px;">${room.name || 'Room'}</h4>
+                    ${room.custom_label ? `<p style="margin: 0; color: #666; font-size: 14px;">${room.custom_label}</p>` : ''}
+                  </div>
+                </div>
+                
+                ${room.dimensions ? `
+                  <div style="background-color: #f8f9fa; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 14px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                      <p style="margin: 0; color: #555;">Width: ${room.dimensions.width || 0}m</p>
+                      <p style="margin: 0; color: #555;">Length: ${room.dimensions.length || 0}m</p>
+                      <p style="margin: 0; color: #555;">Height: ${room.dimensions.height || 0}m</p>
+                      ${room.dimensions.area ? `<p style="margin: 0; color: #555;">Area: ${room.dimensions.area}m²</p>` : ''}
+                      ${room.dimensions.volume ? `<p style="margin: 0; color: #555;">Volume: ${room.dimensions.volume}m³</p>` : ''}
+                    </div>
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } catch (error) {
+        console.error('Error generating rooms section:', error);
+        return '<!-- Error generating rooms section -->';
+      }
+    };
+    
+    // Design settings with fallbacks
+    const accentColor = options?.accentColor || companyProfile?.quote_accent_color || '#3b82f6';
+    const headerText = companyProfile?.quote_header_text || '';
+    const footerText = companyProfile?.quote_footer_text || 'Thank you for your business';
+    const titlePageHeading = options?.titlePage?.heading || companyProfile?.quote_title_page_heading || 'Professional Quotation';
+    const titlePageSubheading = options?.titlePage?.subheading || companyProfile?.quote_title_page_subheading || quote.reference || 'Quote';
+    const titlePageBackgroundUrl = options?.titlePage?.backgroundUrl || companyProfile?.quote_title_page_background_url || '';
+    const pageSize = options?.pageSize || 'a4';
+    
+    // Generate line items HTML
+    const lineItemsHtml = (lineItems || []).map(item => `
+      <tr>
+        <td>
+          <strong>${item.description || 'Item'}</strong>
+          ${item.equipment_make && item.equipment_model ? 
+            `<br><span style="font-size: 0.9em; color: #666;">${item.equipment_make} ${item.equipment_model}</span>` : ''}
+        </td>
+        <td>${item.quantity || 1}</td>
+        <td>${formatCurrency(item.unit_price || 0)}</td>
+        <td>${formatCurrency(item.subtotal || 0)}</td>
+      </tr>
+    `).join('');
+    
+    // Complete HTML template
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${quote.reference || 'Quote'} - Quotation</title>
+  <style>
+    @page {
+      size: ${pageSize === 'a4' ? 'A4' : 'letter'};
+    }
+    
+    @page :first {
+      margin: 0;
+    }
+    
+    @page :not(:first) {
+      margin: 2cm;
+    }
+    
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      margin: 0;
+      padding: 0;
+      background-color: #fff;
+    }
+    
+    .container {
+      max-width: 21cm;
+      margin: 0 auto;
+      padding: 0;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 40px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid ${accentColor};
+    }
+    
+    .logo {
+      max-height: 80px;
+      margin-bottom: 10px;
+    }
+    
+    .custom-header {
+      background-color: #f8f9fa;
+      padding: 10px;
+      text-align: center;
+      margin-bottom: 20px;
+      color: ${accentColor};
+      font-style: italic;
+    }
+    
+    .company-info {
+      font-size: 14px;
+    }
+    
+    .quote-info {
+      text-align: right;
+    }
+    
+    .quote-info h2 {
+      color: ${accentColor};
+      margin-bottom: 10px;
+    }
+    
+    .customer-info {
+      margin-bottom: 30px;
+    }
+    
+    h3 {
+      color: ${accentColor};
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 5px;
+      margin-top: 30px;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    
+    th {
+      background-color: #f2f2f2;
+      text-align: left;
+      padding: 10px;
+      border: 1px solid #ddd;
+    }
+    
+    td {
+      padding: 10px;
+      border: 1px solid #ddd;
+    }
+    
+    tr:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+    
+    .amount-summary {
+      margin-top: 20px;
+      text-align: right;
+    }
+    
+    .total {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 10px;
+      color: ${accentColor};
+    }
+    
+    .notes {
+      margin-top: 40px;
+      background-color: #f9f9f9;
+      padding: 15px;
+      border-radius: 5px;
+    }
+    
+    .footer {
+      margin-top: 60px;
+      text-align: center;
+      font-size: 12px;
+      color: #666;
+      border-top: 1px solid #ddd;
+      padding-top: 20px;
+    }
+    
+    .title-page {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      background: ${titlePageBackgroundUrl ? `url(${titlePageBackgroundUrl}) no-repeat center center` : 'linear-gradient(135deg, #fff, #f5f5f5)'};
+      background-size: cover;
+      position: relative;
+      margin: 0;
+      padding: 0;
+      page-break-after: always;
+    }
+    
+    .title-page-content {
+      position: relative;
+      z-index: 2;
+      padding: 40px;
+      background-color: rgba(255, 255, 255, 0.85);
+      border-radius: 10px;
+      max-width: 500px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .title-page h1 {
+      font-size: 32px;
+      color: ${accentColor};
+      margin-bottom: 10px;
+    }
+    
+    .title-page h2 {
+      font-size: 24px;
+      color: #666;
+      font-weight: normal;
+    }
+    
+    .title-page img {
+      max-width: 200px;
+      margin-bottom: 40px;
+    }
+    
+    @media print {
+      body {
+        font-size: 12pt;
+      }
+      
+      .container {
+        width: 100%;
+        max-width: none;
+      }
+      
+      .no-print {
+        display: none;
+      }
+      
+      .page-break {
+        page-break-before: always;
+      }
+      
+      .title-page {
+        width: 100vw;
+        height: 100vh;
+        margin: 0;
+        padding: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="title-page">
+    <div class="title-page-content">
+      ${companyProfile?.logo_url ? `<img src="${companyProfile.logo_url}" alt="Company Logo">` : ''}
+      <h1>${titlePageHeading}</h1>
+      <h2>${titlePageSubheading}</h2>
+      <p style="margin-top: 40px; color: #666;">${formatDate(quote.created_at || new Date())}</p>
+      <p style="color: #666; font-weight: bold;">${quote.customer_name || 'Customer'}</p>
+      <p style="color: #666;">${getAddress()}</p>
+    </div>
+  </div>
+
+  <div class="container">
+    ${headerText ? `<div class="custom-header">${headerText}</div>` : ''}
+    
+    <div class="header">
+      <div>
+        ${companyProfile?.logo_url ? `<img src="${companyProfile.logo_url}" alt="Company Logo" class="logo">` : ''}
+        <div class="company-info">
+          <div><strong>${companyProfile?.company_name || 'Your Company'}</strong></div>
+          <div>${companyProfile?.address_line1 || ''}</div>
+          ${companyProfile?.address_line2 ? `<div>${companyProfile.address_line2}</div>` : ''}
+          <div>${companyProfile?.city || ''} ${companyProfile?.postcode || ''}</div>
+          <div>${companyProfile?.phone || ''}</div>
+          <div>${companyProfile?.email || ''}</div>
+        </div>
+      </div>
+      <div class="quote-info">
+        <h2>QUOTATION</h2>
+        <div><strong>Reference:</strong> ${quote.reference || 'QT-' + new Date().getTime()}</div>
+        <div><strong>Date:</strong> ${formatDate(quote.created_at || new Date())}</div>
+        <div><strong>Valid until:</strong> ${quote.validity_period || 30} days</div>
+      </div>
+    </div>
+    
+    <div class="customer-info">
+      <h3>Customer Information</h3>
+      <div><strong>Name:</strong> ${quote.customer_name || 'Customer'}</div>
+      <div><strong>Project Address:</strong> ${getAddress()}</div>
+      ${quote.type ? `<div><strong>Project Type:</strong> ${quote.type}</div>` : ''}
+      ${quote.building_type ? `<div><strong>Building Type:</strong> ${quote.building_type}</div>` : ''}
+    </div>
+    
+    ${generateRoomsSections()}
+    
+    <div class="page-break"></div>
+    
+    <h3>Quote Items</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Quantity</th>
+          <th>Unit Price</th>
+          <th>Subtotal</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lineItemsHtml || `<tr><td colspan="4">No items available</td></tr>`}
+      </tbody>
+    </table>
+    
+    <div class="amount-summary">
+      <div><strong>Subtotal:</strong> ${formatCurrency(quote.subtotal || 0)}</div>
+      ${quote.tax_amount ? `<div><strong>VAT (${quote.tax_rate || 20}%):</strong> ${formatCurrency(quote.tax_amount)}</div>` : ''}
+      ${quote.discount_amount ? `<div><strong>Discount:</strong> ${formatCurrency(quote.discount_amount)}</div>` : ''}
+      <div class="total"><strong>Total:</strong> ${formatCurrency(quote.total_amount || 0)}</div>
+    </div>
+    
+    <div class="page-break"></div>
+    
+    ${quote.terms || companyProfile?.default_quote_terms ? `
+      <div class="notes">
+        <h3>Terms and Conditions</h3>
+        <div style="white-space: pre-line;">${quote.terms || companyProfile?.default_quote_terms || ''}</div>
+      </div>
+    ` : ''}
+    
+    <div class="footer">
+      <p>${footerText}</p>
+      <p>${companyProfile?.company_name || 'Your Company'}</p>
+    </div>
+  </div>
+</body>
+</html>
+    `;
+    
+    console.log('HTML generation completed successfully');
+    return html;
+  } catch (error) {
+    console.error('Error generating HTML:', error);
+    throw new Error(`HTML generation failed - ${error.message}`);
+  }
 };
 
-// Image optimization function to reduce image sizes when needed
-const optimizeImages = async (html, shouldOptimize = false) => {
-  if (!shouldOptimize) return html;
-  
-  console.log('Optimizing images in HTML content...');
-  
+// Process images to optimize them if needed
+const optimizeImages = (html, shouldOptimize) => {
   try {
-    // Simple image optimization technique - replace high resolution image URLs with resized versions
-    // This is a basic implementation - in production you might want to use proper image processing
+    if (!shouldOptimize) return html;
     
-    // For example, if using Supabase storage, you might append transformation parameters to image URLs
-    // This is a placeholder implementation that can be expanded
-    const optimizedHtml = html.replace(/<img\s+src="([^"]+)"/gi, (match, url) => {
-      // For Supabase storage URLs, you could add transformation parameters
-      if (url.includes('supabase.co') && !url.includes('?')) {
-        return `<img src="${url}?width=800&quality=80"`;
+    console.log("Optimizing images in HTML...");
+    
+    // Simple optimization - this approach limits image dimensions using style attributes
+    // In a production solution, you might want to use actual image processing
+    const optimizedHtml = html.replace(/<img([^>]*)>/g, (match, attributes) => {
+      // Only add style if it doesn't already have a style attribute with max-width
+      if (!attributes.includes('max-width') && !attributes.includes('style')) {
+        return `<img${attributes} style="max-width: 800px; height: auto;">`;
       }
       return match;
     });
     
-    console.log('Image optimization complete');
     return optimizedHtml;
   } catch (error) {
     console.error('Error optimizing images:', error);
-    // Return original HTML if optimization fails
+    // Return original HTML on error rather than failing
     return html;
   }
 };
 
-// Main endpoint for generating quote PDFs with improved timeout handling and image optimization
+// Route to generate quote PDF
 app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
-  console.log('PDF generation request received');
-  console.log('Request origin:', req.headers.origin);
-  console.log('Request headers:', req.headers);
-  
   const startTime = Date.now();
   let browser = null;
-  let tempHtmlPath = null;
-  let tempPdfPath = null;
-  
-  // Set a timeout for the entire request
-  const requestTimeoutId = setTimeout(() => {
-    if (!res.headersSent) {
-      console.error('Request timeout after', REQUEST_TIMEOUT, 'ms');
-      res.status(504).json({ 
-        error: 'PDF generation timed out', 
-        message: 'The request took too long to complete. Try reducing image sizes or optimizing your PDF.' 
-      });
-    }
-  }, REQUEST_TIMEOUT);
   
   try {
     const { quoteId, options } = req.body;
     
     if (!quoteId) {
-      clearTimeout(requestTimeoutId);
-      return res.status(400).json({ error: 'Missing quoteId parameter' });
+      return res.status(400).json({ error: 'Quote ID is required' });
     }
     
-    console.log(`Processing quote PDF generation for quote ID: ${quoteId}`);
-    console.log('Options:', options);
+    console.log(`Starting PDF generation for quote: ${quoteId}`);
+    console.log('Generation options:', JSON.stringify(options));
     
-    // Create temp directory for files if it doesn't exist
-    const tempDir = path.join(os.tmpdir(), 'quote-pdfs');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    // Generate a unique file name
+    const fileId = uuidv4().substring(0, 8);
     
-    // Fetch all necessary data for the quote
+    // Fetch quote data from Supabase
+    console.log('Fetching quote data...');
     const quoteData = await fetchQuoteData(quoteId);
-    console.log(`Successfully fetched data for quote ${quoteId}`);
     
-    // Generate HTML for the quote
-    const html = await generateQuoteHtml(quoteData, options || {});
+    // Generate HTML
+    console.log('Generating HTML...');
+    const html = generateQuoteHtml(quoteData, options);
     
     if (!html) {
       throw new Error('HTML generation failed - html is undefined');
     }
     
-    // Apply image optimization if requested
-    const processedHtml = await optimizeImages(html, options?.optimizeImages);
+    // Optimize images if requested
+    console.log('Optimizing HTML...');
+    const optimizedHtml = optimizeImages(html, options?.optimizeImages !== false);
     
-    // Save HTML to temp file (for debugging)
-    tempHtmlPath = path.join(tempDir, `quote-${quoteId}-${Date.now()}.html`);
-    fs.writeFileSync(tempHtmlPath, processedHtml, 'utf8');
-    console.log(`HTML saved to ${tempHtmlPath}`);
-    
-    // Launch browser with optimized configuration
-    console.log('Launching browser with optimized configuration...');
+    // Generate PDF with puppeteer
+    console.log('Launching browser...');
     browser = await puppeteer.launch({
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--js-flags=--max-old-space-size=512', // Limit JS memory usage
-      ],
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
       headless: 'new',
-      timeout: PDF_GENERATION_TIMEOUT,
     });
     
-    console.log('Browser launched successfully');
-    
-    // Create new page with error logging
     console.log('Creating new page...');
     const page = await browser.newPage();
     
-    // Configure page to optimize resource loading
-    await page.setJavaScriptEnabled(true);
-    await page.setCacheEnabled(true); // Enable cache for images
-    await page.setRequestInterception(true);
-    
-    // Only block unnecessary resources but allow images
-    page.on('request', (request) => {
-      const resourceType = request.resourceType();
-      if (['font', 'media', 'websocket'].includes(resourceType)) {
-        request.abort();
-      } else {
-        request.continue();
-      }
+    // Set viewport to match page size
+    await page.setViewport({
+      width: options?.pageSize === 'letter' ? 2550 : 2480,
+      height: options?.pageSize === 'letter' ? 3300 : 3508,
+      deviceScaleFactor: 2,
     });
     
-    // Add page error event listeners for debugging
-    page.on('error', err => {
-      console.error('Page error:', err);
+    console.log('Setting content...');
+    // Set a reasonable timeout for content loading
+    await page.setContent(optimizedHtml, {
+      waitUntil: 'networkidle0',
+      timeout: IMAGE_PROCESSING_TIMEOUT,
     });
     
-    page.on('pageerror', err => {
-      console.error('Page JS error:', err);
-    });
-    
-    page.on('console', msg => {
-      console.log('Page console message:', msg.text());
-    });
-    
-    // Set timeout for image processing
-    const imageTimeoutId = setTimeout(() => {
-      console.warn('Image processing is taking longer than expected. Continuing with PDF generation...');
-    }, IMAGE_PROCESSING_TIMEOUT);
-    
-    // Set content with stepped approach for more stable rendering
-    console.log('Setting page content...');
-    try {
-      await page.setContent(processedHtml, { 
-        waitUntil: ['domcontentloaded', 'networkidle0'],
-        timeout: IMAGE_PROCESSING_TIMEOUT
-      });
-      
-      clearTimeout(imageTimeoutId);
-      
-      // Wait for all images to load with improved error handling
-      await page.evaluate(() => {
-        return new Promise((resolve) => {
-          const imgs = document.querySelectorAll('img');
-          if (imgs.length === 0) {
-            return resolve(true);
-          }
-          
-          let loadedImages = 0;
-          const totalImages = imgs.length;
-          
-          console.log(`Waiting for ${totalImages} images to load...`);
-          
-          const imageLoaded = () => {
-            loadedImages++;
-            if (loadedImages === totalImages) {
-              console.log('All images loaded successfully');
-              resolve(true);
-            }
-          };
-          
-          // Set a maximum wait time per image
-          const imageTimeout = 10000; // 10 seconds per image
-          
-          imgs.forEach(img => {
-            // Handle already loaded images
-            if (img.complete) {
-              imageLoaded();
-              return;
-            }
-            
-            // Handle load and error events
-            img.addEventListener('load', imageLoaded);
-            img.addEventListener('error', () => {
-              console.warn(`Failed to load image: ${img.src}`);
-              imageLoaded(); // Count errors as loaded to avoid hanging
-            });
-            
-            // Set timeout for this specific image
-            setTimeout(() => {
-              if (!img.complete) {
-                console.warn(`Image load timeout: ${img.src}`);
-                imageLoaded(); // Force continue after timeout
-              }
-            }, imageTimeout);
-          });
-        });
-      }).catch(err => {
-        console.warn('Warning during image loading, continuing anyway:', err);
-        // Continue anyway even if image loading has issues
-      });
-      
-      // Wait for network to be idle and all content to load
-      await page.waitForFunction(() => document.readyState === 'complete', {
-        timeout: 30000
-      }).catch(err => {
-        console.warn('Warning during page load completion, continuing anyway:', err);
-        // Continue anyway even if not all content is fully loaded
-      });
-      
-      console.log('Page content set successfully');
-    } catch (contentError) {
-      console.error('Error setting page content:', contentError);
-      // Continue anyway, we might still be able to generate a PDF even with content errors
-      console.log('Attempting to continue PDF generation despite content errors...');
-    }
-    
-    // Set PDF options with better margins for A4/Letter
-    const pdfOptions = {
-      format: options?.pageSize || 'A4',
+    console.log('Generating PDF...');
+    const pdfBuffer = await page.pdf({
+      format: options?.pageSize === 'letter' ? 'Letter' : 'A4',
       printBackground: true,
       margin: {
-        top: '10mm',
-        right: '10mm',
-        bottom: '10mm',
-        left: '10mm'
+        top: '0.4in',
+        right: '0.4in',
+        bottom: '0.4in',
+        left: '0.4in',
       },
-      preferCSSPageSize: true,
-      displayHeaderFooter: false,
-      timeout: PDF_GENERATION_TIMEOUT,
-      omitBackground: false,
-      scale: 1
-    };
+    });
     
-    // Generate PDF with improved error handling
-    console.log('Generating PDF with options:', pdfOptions);
-    let pdfBuffer;
-    try {
-      // Force a small delay to ensure all content is rendered
-      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1000)));
-      
-      // Generate the PDF with explicit error handling and timeout
-      pdfBuffer = await Promise.race([
-        page.pdf(pdfOptions),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`PDF generation timeout after ${PDF_GENERATION_TIMEOUT/1000}s`)), 
-            PDF_GENERATION_TIMEOUT)
-        )
-      ]);
-      
-      if (!pdfBuffer || !pdfBuffer.length) {
-        throw new Error('PDF generation produced empty buffer');
-      }
-      
-      console.log('PDF generated successfully:', pdfBuffer.length, 'bytes');
-    } catch (pdfError) {
-      console.error('Error generating PDF:', pdfError);
-      throw new Error(`Failed to generate PDF: ${pdfError.message}`);
-    }
-    
-    // Save PDF to temp file
-    const fileName = `quote-${quoteData.quote.reference.replace(/\s+/g, '-')}-${Date.now()}.pdf`;
-    tempPdfPath = path.join(tempDir, fileName);
-    
-    try {
-      if (!pdfBuffer) {
-        throw new Error('Cannot write null or undefined PDF buffer');
-      }
-      fs.writeFileSync(tempPdfPath, pdfBuffer);
-      console.log(`PDF saved to ${tempPdfPath}`);
-    } catch (writeError) {
-      console.error('Error writing PDF file:', writeError);
-      throw new Error(`Failed to write PDF file: ${writeError.message}`);
-    }
+    console.log('PDF generated, uploading to storage...');
     
     // Upload PDF to Supabase Storage
-    console.log('Uploading PDF to Supabase Storage...');
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('quote_pdfs')
-      .upload(fileName, pdfBuffer, {
+    const quoteRef = quoteData.quote.reference || `QT-${fileId}`;
+    const fileName = `${quoteRef.replace(/\s+/g, '-')}-${fileId}.pdf`;
+    const storagePath = `quote_pdfs/${quoteId}/${fileName}`;
+    
+    const { data: storageData, error: storageError } = await supabase.storage
+      .from('documents')
+      .upload(storagePath, pdfBuffer, {
         contentType: 'application/pdf',
         upsert: true
       });
     
-    if (uploadError) {
-      console.error('Error uploading PDF to storage:', uploadError);
-      throw new Error(`Failed to upload PDF: ${uploadError.message}`);
+    if (storageError) {
+      console.error('Error uploading PDF to storage:', storageError);
+      throw new Error(`Failed to upload PDF: ${storageError.message}`);
     }
     
-    // Generate a public URL
+    // Get public URL for the uploaded file
     const { data: urlData } = await supabase.storage
+      .from('documents')
+      .getPublicUrl(storagePath);
+    
+    // Add record in the quote_pdfs table
+    const version = 1; // In production, you might want to handle versioning
+    
+    const { data: pdfData, error: pdfError } = await supabase
       .from('quote_pdfs')
-      .getPublicUrl(fileName);
+      .insert({
+        quote_id: quoteId,
+        pdf_url: storagePath,
+        file_name: fileName,
+        version,
+        options: options,
+        created_by: req.user.id
+      })
+      .select()
+      .single();
     
-    const publicUrl = urlData.publicUrl;
+    if (pdfError) {
+      console.warn('Error storing PDF record:', pdfError);
+      // Continue anyway as this is not critical
+    }
     
-    // Record processing time
     const processingTime = Date.now() - startTime;
-    console.log(`PDF generated and uploaded successfully in ${processingTime}ms`);
+    console.log(`PDF generation completed in ${processingTime}ms`);
     
-    // Clear the request timeout since we're responding successfully
-    clearTimeout(requestTimeoutId);
-    
-    // Return success response with URL
-    res.json({
+    return res.status(200).json({
       success: true,
-      documentUrl: publicUrl,
-      fileName: fileName,
-      processingTime: processingTime
+      documentUrl: urlData.publicUrl,
+      fileName,
+      processingTime,
+      createdAt: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Error in PDF generation:', error);
+    const processingTime = Date.now() - startTime;
+    console.error(`PDF generation failed after ${processingTime}ms:`, error);
     
-    // Clear the request timeout since we're responding with an error
-    clearTimeout(requestTimeoutId);
-    
-    // Return detailed error with additional information
-    res.status(500).json({
-      error: 'Failed to generate PDF',
-      message: error.message,
-      details: 'The server encountered an error while generating the PDF. This may be due to a timeout, large images, or formatting issues.',
-      suggestions: [
-        'Try reducing the size of images in your quote',
-        'Check if there are too many items or complex content',
-        'Try again with image optimization enabled',
-        'Break large quotes into smaller ones'
-      ],
-      stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
+    // Return a proper error response
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'PDF generation failed',
+      processingTime,
+      // Only include stack in development mode
+      ...(process.env.NODE_ENV !== 'production' && { stack: error.stack })
     });
   } finally {
-    // Cleanup resources
+    // Close the browser
     if (browser) {
       try {
-        console.log('Closing browser...');
         await browser.close();
-        console.log('Browser closed successfully');
-      } catch (err) {
-        console.error('Error closing browser:', err);
+        console.log('Browser closed');
+      } catch (closeError) {
+        console.error('Error closing browser:', closeError);
       }
-    }
-    
-    // Log memory usage to help debug resource constraints
-    try {
-      const memoryUsage = process.memoryUsage();
-      console.log('Memory usage after PDF generation:', {
-        rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
-        heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`, 
-        heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
-        external: `${Math.round(memoryUsage.external / 1024 / 1024)}MB`
-      });
-      
-      // Force garbage collection if available
-      if (global.gc) {
-        global.gc();
-        console.log('Manual garbage collection triggered');
-      }
-    } catch (err) {
-      console.error('Error logging memory usage:', err);
     }
   }
 });
 
-// Start server
+// Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`PDF service running on port ${PORT}`);
+  console.log(`Quote PDF service started on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Timeout settings: PDF=${PDF_GENERATION_TIMEOUT}ms, Images=${IMAGE_PROCESSING_TIMEOUT}ms, Request=${REQUEST_TIMEOUT}ms`);
-  
-  // Log memory usage at startup
-  const memoryUsage = process.memoryUsage();
-  const usedMemoryMB = Math.round(memoryUsage.rss / 1024 / 1024);
-  console.log(`Memory usage at startup: ${usedMemoryMB}MB`);
+  console.log(`Memory limits: ${JSON.stringify(process.memoryUsage())}`);
+  console.log(`Service ready to accept connections`);
 });
+
