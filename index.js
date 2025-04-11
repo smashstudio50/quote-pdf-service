@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -875,4 +876,26 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     // Keep temp files for debugging
     console.log('Temp files kept for debugging:');
     if (tempHtmlPath) console.log(`- HTML: ${tempHtmlPath}`);
-    if (tempPdfPath) console.log(`- PDF: ${tempPdfPath
+    if (tempPdfPath) console.log(`- PDF: ${tempPdfPath}`);
+  }
+});
+
+// Test CORS endpoint for client testing
+app.get('/test-cors', (req, res) => {
+  res.json({
+    success: true,
+    message: 'CORS test successful',
+    origin: req.headers.origin || 'No origin header'
+  });
+});
+
+// Define server port
+const PORT = process.env.PORT || 3000;
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`PDF service running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Memory usage at startup: ${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB`);
+});
+
