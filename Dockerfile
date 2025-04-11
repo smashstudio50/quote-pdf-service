@@ -1,41 +1,54 @@
+# Use the official Node.js image
 FROM node:18-slim
 
-# Install necessary dependencies and Chrome
+# Install necessary dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
-    curl \
     ca-certificates \
     fonts-liberation \
-    libxss1 \
     libappindicator3-1 \
     libasound2 \
-    libnss3 \
     libatk-bridge2.0-0 \
-    libgtk-3-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libgdk-pixbuf2.0-0 \
+    libnspr4 \
+    libnss3 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    xdg-utils \
     libgbm1 \
-    --no-install-recommends && \
-    curl -sSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o chrome.deb && \
-    apt install -y ./chrome.deb && \
-    rm chrome.deb && \
-    rm -rf /var/lib/apt/lists/*
+    libxshmfence1 \
+    libu2f-udev \
+    libvulkan1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Create and set the working directory
 WORKDIR /usr/src/app
 
-# Copy and install dependencies
+# Copy package.json and install dependencies
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm install --production
 
-# Copy source code
+# Copy the rest of the application
 COPY . .
 
-# Puppeteer settings
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome \
-    NODE_ENV=production
+# Set environment variable to skip Puppeteer Chromium download (we're using system Chrome)
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV NODE_ENV=production
 
-# Expose service port
+# Default port
+ENV PORT=3000
+
+# Use system-installed Chrome
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
+
+# Expose port
 EXPOSE 3000
 
 # Start the app
