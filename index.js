@@ -1,4 +1,4 @@
-
+// ✅ Fixed index.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -12,22 +12,19 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// ✅ Move PORT here so it's only declared once
+const PORT = process.env.PORT || 3000;
 
-// Initialize Express app
 const app = express();
-
-// Set trust proxy to handle rate limiting behind reverse proxies
 app.set('trust proxy', true);
 
-// Create Supabase client with service role key for storage write access
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// Parse allowed origins from environment variable or use default list
-const allowedOrigins = process.env.CORS_ORIGIN 
-  ? process.env.CORS_ORIGIN.split(',') 
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',')
   : [
       'https://aclima.aismartcrew.com',
       'https://e7fa105b-749a-475f-8495-9f5ad5b8c35a.lovableproject.com',
@@ -36,117 +33,77 @@ const allowedOrigins = process.env.CORS_ORIGIN
 
 console.log('Server starting with CORS configuration:');
 console.log('Allowed origins:', allowedOrigins);
-if (!origin) {
-  console.log('Request origin missing, setting wildcard CORS fallback');
-  res.header('Access-Control-Allow-Origin', '*');
-}
-// IMPROVED: More permissive CORS configuration for debugging
+
+// ❌ Removed invalid "if (!origin) {...}" block here (was crashing the app)
+
 const corsOptions = {
   origin: function (origin, callback) {
     console.log('Request origin:', origin);
-    
-    // Allow requests with no origin (like mobile apps, curl, etc)
     if (!origin) {
       console.log('Allowing request with no origin');
-      callback(null, true);
-      return;
+      return callback(null, true);
     }
-    
-    // Check if the origin is in our allowed list or if we're allowing all origins
     if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
       console.log('Origin allowed by CORS policy:', origin);
-      callback(null, true);
-    } else {
-      // Check if the origin contains any of our allowed origins as substrings
-      // This helps with development/preview environments with dynamic subdomains
-      const isRelatedOrigin = allowedOrigins.some(allowed => 
-        origin.includes(allowed) || allowed.includes(origin)
-      );
-      
-      if (isRelatedOrigin) {
-        console.log('Related origin allowed by CORS policy:', origin);
-        callback(null, true);
-        return;
-      }
-      
-      console.log('Origin rejected by CORS policy:', origin);
-      callback(new Error('Not allowed by CORS policy'));
+      return callback(null, true);
     }
+    const isRelatedOrigin = allowedOrigins.some(allowed =>
+      origin.includes(allowed) || allowed.includes(origin)
+    );
+    if (isRelatedOrigin) {
+      console.log('Related origin allowed by CORS policy:', origin);
+      return callback(null, true);
+    }
+    console.log('Origin rejected by CORS policy:', origin);
+    return callback(new Error('Not allowed by CORS policy'));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Client-Info', 'ApiKey'],
   credentials: true,
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 };
 
-// Apply CORS middleware with options
 app.use(cors(corsOptions));
 
-// Add headers middleware to ensure CORS headers are always set
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  } else {
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  // Log headers being set
-  console.log('Setting CORS headers for request from origin:', origin);
-  
-  next();
-});
-
-// Add a middleware to ensure OPTIONS requests are handled properly
-app.options('*', (req, res) => {
-  // Get the origin from the request
-  const origin = req.headers.origin;
-  
-  console.log('OPTIONS request received from origin:', origin);
-  
-  // Allow all OPTIONS requests for debugging
   res.header('Access-Control-Allow-Origin', origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey');
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400'); // 24 hours
-  
-  // Respond with 200 OK for OPTIONS requests
+  console.log('Setting CORS headers for request from origin:', origin);
+  next();
+});
+
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  console.log('OPTIONS request received from origin:', origin);
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Client-Info, ApiKey');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
   return res.sendStatus(200);
 });
 
-// Middleware
-app.use(helmet({
-  // Disable content security policy for PDF generation
-  contentSecurityPolicy: false,
-  // Allow iframe for PDF preview
-  frameguard: false
-}));
+app.use(helmet({ contentSecurityPolicy: false, frameguard: false }));
 app.use(express.json({ limit: '20mb' }));
 app.use(morgan('combined'));
 
-// Apply rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Too many requests from this IP, please try again later.',
-  // Add a custom handler to bypass rate limiting on specific endpoints for debugging
   skipFailedRequests: true,
-  // Safely handle rate limit bypass for trusted proxies
   keyGenerator: (req) => {
-    // Add additional logging for IP addresses to help debug
     console.log('Client IP:', req.ip);
     console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
-    return req.ip; 
+    return req.ip;
   }
 });
 app.use('/generate-quote-pdf', limiter);
-
 // Auth middleware to verify JWT token
 const verifyToken = async (req, res, next) => {
   try {
