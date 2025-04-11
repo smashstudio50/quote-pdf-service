@@ -880,8 +880,6 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Define server port
-const PORT = process.env.PORT || 3000;
 
 // Start server
 app.listen(PORT, () => {
