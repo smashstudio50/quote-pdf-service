@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -876,46 +875,4 @@ app.post('/generate-quote-pdf', verifyToken, async (req, res) => {
     // Keep temp files for debugging
     console.log('Temp files kept for debugging:');
     if (tempHtmlPath) console.log(`- HTML: ${tempHtmlPath}`);
-    if (tempPdfPath) console.log(`- PDF: ${tempPdfPath}`);
-  }
-});
-
-// Add a test endpoint to verify CORS handling
-app.get('/test-cors', (req, res) => {
-  console.log('CORS test endpoint called from origin:', req.headers.origin);
-  res.json({ message: 'CORS test successful', time: new Date().toISOString() });
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
-});
-
-// New endpoint to test and debug CORS headers
-app.get('/debug-cors', (req, res) => {
-  console.log('Debug CORS endpoint called');
-  console.log('Request headers:', req.headers);
-  
-  res.json({
-    message: 'CORS debug information',
-    headers: {
-      origin: req.headers.origin,
-      host: req.headers.host,
-      referer: req.headers.referer
-    },
-    corsHeaders: {
-      'Access-Control-Allow-Origin': res.getHeader('Access-Control-Allow-Origin'),
-      'Access-Control-Allow-Methods': res.getHeader('Access-Control-Allow-Methods'),
-      'Access-Control-Allow-Headers': res.getHeader('Access-Control-Allow-Headers')
-    }
-  });
-});
-
-// Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Quote PDF service running on port ${PORT}`);
-  console.log(`Server listening on 0.0.0.0:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`CORS configuration: ${process.env.CORS_ORIGIN || '*'}`);
-});
+    if (tempPdfPath) console.log(`- PDF: ${tempPdfPath
